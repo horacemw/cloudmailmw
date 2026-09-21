@@ -1,0 +1,96 @@
+# ─── Cloud Mail — Postfix main.cf ────────────────────────────────────
+# Written to /etc/postfix/main.cf by the deploy script.
+# Reads virtual domains, mailboxes, aliases from PostgreSQL so a UI change
+# in the control plane takes effect immediately — no config regeneration.
+
+# ─── Server identity ─────────────────────────────────────────────────
+myhostname          = mail.digiskills.live
+mydomain            = digiskills.live
+myorigin            = $myhostname
+inet_interfaces     = all
+inet_protocols      = ipv4
+mydestination       =
+smtpd_banner        = $myhostname ESMTP Cloud Mail
+biff                = no
+append_dot_mydomain = no
+readme_directory    = no
+compatibility_level = 3.6
+
+# ─── Anti-relay: only authenticated users may submit ──────────────────
+mynetworks          = 127.0.0.0/8 [::1]/128
+smtpd_relay_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_unauth_destination
+smtpd_recipient_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_unauth_destination,
+    reject_unauth_pipelining,
+    reject_non_fqdn_recipient,
+    reject_unknown_recipient_domain
+smtpd_sender_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_non_fqdn_sender,
+    reject_unknown_sender_domain
+smtpd_helo_required = yes
+smtpd_helo_restrictions =
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    reject_invalid_helo_hostname,
+    reject_non_fqdn_helo_hostname
+
+# ─── Virtual domains / mailboxes / aliases from PostgreSQL ───────────
+virtual_transport            = lmtp:unix:private/dovecot-lmtp
+virtual_mailbox_domains      = pgsql:/etc/postfix/pgsql/virtual-domains.cf
+virtual_mailbox_maps         = pgsql:/etc/postfix/pgsql/virtual-mailboxes.cf
+virtual_alias_maps           = pgsql:/etc/postfix/pgsql/virtual-aliases.cf
+
+# ─── SASL AUTH via Dovecot ───────────────────────────────────────────
+smtpd_sasl_type              = dovecot
+smtpd_sasl_path              = private/auth
+smtpd_sasl_auth_enable       = yes
+smtpd_sasl_security_options  = noanonymous
+broken_sasl_auth_clients     = yes
+
+# ─── TLS ─────────────────────────────────────────────────────────────
+# Certs issued by certbot for mail.digiskills.live.
+smtpd_tls_cert_file          = /etc/letsencrypt/live/mail.digiskills.live/fullchain.pem
+smtpd_tls_key_file           = /etc/letsencrypt/live/mail.digiskills.live/privkey.pem
+smtpd_tls_security_level     = may
+smtpd_tls_loglevel           = 1
+smtpd_tls_received_header    = yes
+smtpd_tls_session_cache_database = btree:${data_directory}/smtpd_scache
+smtpd_tls_protocols          = >=TLSv1.2
+smtpd_tls_mandatory_protocols = >=TLSv1.2
+smtpd_tls_ciphers            = high
+smtpd_tls_mandatory_ciphers  = high
+
+smtp_tls_security_level      = may
+smtp_tls_protocols           = >=TLSv1.2
+smtp_tls_loglevel            = 1
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+smtp_dns_support_level       = dnssec
+
+# ─── Milters (Rspamd for spam scoring + DKIM signing) ────────────────
+milter_default_action        = accept
+milter_protocol              = 6
+smtpd_milters                = inet:127.0.0.1:11332
+non_smtpd_milters            = $smtpd_milters
+
+# ─── Size + rate limits ──────────────────────────────────────────────
+# 40 MB — Postfix rejects inline comments after numeric values, keep pure integers.
+message_size_limit = 41943040
+# per-mailbox quota is Dovecot's job
+mailbox_size_limit = 0
+smtpd_client_message_rate_limit = 60
+smtpd_client_recipient_rate_limit = 200
+anvil_rate_time_unit         = 60s
+smtpd_error_sleep_time       = 5s
+smtpd_soft_error_limit       = 3
+smtpd_hard_error_limit       = 20
+
+# ─── Alias handling ──────────────────────────────────────────────────
+alias_maps                   = hash:/etc/aliases
+alias_database               = hash:/etc/aliases

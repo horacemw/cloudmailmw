@@ -1,0 +1,32 @@
+[Unit]
+Description=Cloud Mail API
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+Requires=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=cloudmail
+Group=cloudmail
+WorkingDirectory=/opt/cloudmail/current/apps/api
+EnvironmentFile=/etc/cloudmail/api.env
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=3
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cloudmail /var/log/cloudmail
+CapabilityBoundingSet=
+AmbientCapabilities=
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+# NOTE: MemoryDenyWriteExecute breaks V8's JIT baseline compiler; Node cannot start with it enabled.
+
+[Install]
+WantedBy=multi-user.target

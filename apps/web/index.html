@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en" style="color-scheme: light; background: #ffffff;">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#159447" />
+    <meta name="description" content="Cloud Mail — Your email. Anywhere." />
+    <title>Cloud Mail — Your Email. Anywhere.</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!--
+      Force LIGHT theme before React mounts, unless the user has explicitly
+      chosen "dark" or "system". This kills the "flash of dark theme" on
+      Android/iOS devices whose OS is set to dark.
+    -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('cloudmail.theme');
+          var isDark = false;
+          if (stored === 'dark') isDark = true;
+          else if (stored === 'system') isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          // Any other value (including null / 'light') → light.
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+            document.documentElement.style.colorScheme = 'dark';
+          } else {
+            document.documentElement.style.colorScheme = 'light';
+          }
+        } catch (_) { /* ignore */ }
+      })();
+    </script>
+  </head>
+  <body class="antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+node_modules
+dist
+dist-ssr
+*.local
+.vscode/*
+!.vscode/extensions.json
+.DS_Store
+*.log
+
+# Local secrets — NEVER commit
+.secrets/
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+authorized_keys
+id_ed25519*
+id_rsa*
+.screenshots/

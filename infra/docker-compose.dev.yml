@@ -1,0 +1,40 @@
+# Local dev stack for Cloud Mail API.
+# Postgres + Redis only — the mail stack (Postfix/Dovecot/Rspamd) is native on the server, not in Docker.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cloudmail-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cloudmail
+      POSTGRES_PASSWORD: cloudmail
+      POSTGRES_DB: cloudmail
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - cloudmail-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "cloudmail", "-d", "cloudmail"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: cloudmail-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - cloudmail-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  cloudmail-pg:
+  cloudmail-redis:

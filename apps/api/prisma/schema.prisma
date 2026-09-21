@@ -1,0 +1,727 @@
+// ─────────────────────────────────────────────────────────────────────
+// Cloud Mail — data model
+//
+// Multi-tenant email hosting control plane. Every non-global row carries
+// tenantId. All API queries filter by tenantId at the repository layer;
+// row-level ownership is also enforced with FK cascades to keep integrity.
+//
+// This is METADATA and CONTROL-PLANE state only. The actual mail bodies
+// live in Dovecot's Maildir on the mail server. `messages_meta` and
+// `attachments_meta` cache indexable fields so we can query without
+// blowing up IMAP for every list operation.
+// ─────────────────────────────────────────────────────────────────────
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearchPostgres"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Tenancy ────────────────────────────────────────────────────────
+
+enum TenantStatus {
+  active
+  suspended
+  archived
+}
+
+enum TenantRole {
+  owner   // full control incl. billing
+  admin   // manage domains, mailboxes, users
+  member  // access own mailbox only
+}
+
+model Tenant {
+  id          String        @id @default(cuid())
+  slug        String        @unique              // url-safe short id
+  name        String
+  plan        String        @default("free")
+  status      TenantStatus  @default(active)
+  storageQuotaBytes BigInt  @default(10737418240) // 10 GiB default
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  members     TenantMember[]
+  domains     Domain[]
+  mailboxes   Mailbox[]
+  aliases     Alias[]
+  migrationJobs MigrationJob[]
+  exportJobs  ExportJob[]
+  apiCredentials ApiCredential[]
+  webhooks    Webhook[]
+  auditEvents AuditEvent[]
+
+  @@map("tenants")
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  email              String    @unique
+  passwordHash       String
+  name               String
+  avatarUrl          String?
+  status             String    @default("active")   // active | suspended | pending
+  isPlatformAdmin    Boolean   @default(false)      // super-admin bit for /v1/admin/*
+  // TOTP 2FA.
+  // - `mfaSecret` is the base32-encoded TOTP secret. Encrypted at rest via
+  //   encryptSecret(); stays null until 2FA is verified.
+  // - `mfaEnabled` flips to true only after the user verifies the first code.
+  // - `mfaRecoveryHashes` are argon2id hashes of one-time backup codes.
+  mfaSecret          String?
+  mfaEnabled         Boolean   @default(false)
+  mfaRecoveryHashes  String[]  @default([])
+  lastLoginAt        DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  memberships    TenantMember[]
+  refreshTokens  RefreshToken[]
+  loginAttempts  LoginAttempt[]
+  contacts       Contact[]
+  signatures     Signature[]
+  signatureImages SignatureImage[]
+  calendars      Calendar[]
+  notifications  Notification[]
+  passwordResets PasswordReset[]
+
+  @@map("users")
+}
+
+/**
+ * One-time password reset tokens. The tokenHash column stores an argon2id
+ * hash of the plaintext token; the plaintext is emailed to the user and
+ * never persisted. Tokens are single-use — usedAt gets set the first time
+ * a reset succeeds and the row is rejected on subsequent attempts.
+ */
+/**
+ * Scheduled send. The payload (recipients, subject, body, attachments) is
+ * encrypted at rest so a snapshot of the DB doesn't reveal outbound content.
+ * The BullMQ `cloudmail-schedule` queue drives fire time — the row survives
+ * queue outages so a Redis flush doesn't lose scheduled messages.
+ */
+enum ScheduledMessageStatus {
+  pending
+  sent
+  failed
+  cancelled
+}
+
+model ScheduledMessage {
+  id             String                 @id @default(cuid())
+  tenantId       String
+  mailboxId      String
+  senderUserId   String
+  sendAt         DateTime
+  status         ScheduledMessageStatus @default(pending)
+  payloadCipher  String                 @db.Text
+  errorSummary   String?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  @@index([mailboxId, sendAt])
+  @@index([status, sendAt])
+  @@map("scheduled_messages")
+}
+
+model PasswordReset {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String
+  ipAddress  String?
+  userAgent  String?
+  expiresAt  DateTime
+  usedAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("password_resets")
+}
+
+model TenantMember {
+  id        String     @id @default(cuid())
+  tenantId  String
+  userId    String
+  role      TenantRole @default(member)
+  // For member role: which mailbox this user "is"
+  mailboxId String?    @unique
+  createdAt DateTime   @default(now())
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mailbox   Mailbox?   @relation(fields: [mailboxId], references: [id], onDelete: SetNull)
+
+  @@unique([tenantId, userId])
+  @@index([userId])
+  @@map("tenant_members")
+}
+
+// ─── Auth ──────────────────────────────────────────────────────────
+
+model RefreshToken {
+  id          String    @id @default(cuid())
+  userId      String
+  tokenHash   String    @unique              // sha256 of the token
+  familyId    String                          // rotation family (theft detection)
+  userAgent   String?
+  ipAddress   String?
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+model LoginAttempt {
+  id          String    @id @default(cuid())
+  userId      String?
+  email       String
+  ipAddress   String
+  success     Boolean
+  reason      String?
+  createdAt   DateTime  @default(now())
+
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([email, createdAt])
+  @@index([ipAddress, createdAt])
+  @@map("login_attempts")
+}
+
+// ─── Domains ───────────────────────────────────────────────────────
+
+enum DomainStatus {
+  pending
+  verification_required
+  verified
+  active
+  suspended
+  disabled
+}
+
+enum DnsCheckKind {
+  mx
+  spf
+  dkim
+  dmarc
+  a
+  ptr
+  ownership_txt
+}
+
+model Domain {
+  id             String       @id @default(cuid())
+  tenantId       String
+  name           String       @unique              // e.g. "example.org"
+  status         DomainStatus @default(pending)
+  isPrimary      Boolean      @default(false)
+  dkimSelector   String       @default("cm1")
+  dkimPublicKey  String?
+  // dkimPrivateKey NEVER lives here; it lives on the mail server (0600 root) and Rspamd reads it.
+  dkimKeyPath    String?
+  ownershipToken String       @default(cuid())    // used for _cloudmail.<domain> TXT
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  verifications  DomainVerification[]
+  mailboxes      Mailbox[]
+  aliases        Alias[]
+
+  @@index([tenantId])
+  @@map("domains")
+}
+
+model DomainVerification {
+  id            String       @id @default(cuid())
+  domainId      String
+  kind          DnsCheckKind
+  expectedValue String                              // what we told the customer to publish
+  observedValue String?                             // what we last saw in DNS
+  passed        Boolean      @default(false)
+  lastCheckedAt DateTime?
+  createdAt     DateTime     @default(now())
+
+  domain        Domain       @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@unique([domainId, kind])
+  @@map("domain_verifications")
+}
+
+// ─── Mailboxes / Aliases / Forwards ───────────────────────────────
+
+enum MailboxStatus {
+  active
+  suspended
+  disabled
+  pending_deletion
+}
+
+model Mailbox {
+  id             String        @id @default(cuid())
+  tenantId       String
+  domainId       String
+  localPart      String                              // "info"
+  // Full address stored denormalized for uniqueness enforcement.
+  address        String        @unique
+  displayName    String?
+  passwordHash   String                              // Dovecot-compatible {ARGON2ID}...
+  quotaBytes     BigInt        @default(5368709120)  // 5 GiB
+  usedBytes      BigInt        @default(0)           // updated by dovecot quota-status
+  status         MailboxStatus @default(active)
+  signature      String?       @db.Text
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  lastLoginAt    DateTime?
+
+  tenant         Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain         Domain        @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  members        TenantMember[]
+  aliases        Alias[]       @relation("AliasDestinationMailbox")
+  forwards       Forward[]
+  folders        Folder[]
+  migrationJobs  MigrationJob[]
+  exportJobs     ExportJob[]
+  mailFilters    MailFilter[]
+  autoReply      AutoReply?
+
+  @@unique([domainId, localPart])
+  @@index([tenantId])
+  @@map("mailboxes")
+}
+
+model Alias {
+  id               String    @id @default(cuid())
+  tenantId         String
+  domainId         String
+  source           String    @unique                  // full address, e.g. "sales@example.org"
+  destinationRaw   String                              // comma-separated list (either local mailboxes or external)
+  destinationMailboxId String?
+  active           Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  domain                Domain    @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  destinationMailbox    Mailbox?  @relation("AliasDestinationMailbox", fields: [destinationMailboxId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@map("aliases")
+}
+
+model Forward {
+  id          String   @id @default(cuid())
+  mailboxId   String
+  destination String                            // external address
+  keepCopy    Boolean  @default(true)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  mailbox     Mailbox  @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@map("forwards")
+}
+
+// ─── Folders + message metadata (cache of IMAP state) ─────────────
+
+model Folder {
+  id         String   @id @default(cuid())
+  mailboxId  String
+  // IMAP folder path, e.g. "INBOX", "INBOX/Projects".
+  path       String
+  displayName String
+  system     Boolean  @default(false)          // Inbox/Sent/Drafts/Trash/Spam/Archive
+  createdAt  DateTime @default(now())
+
+  mailbox    Mailbox  @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@unique([mailboxId, path])
+  @@map("folders")
+}
+
+// ─── Migration / export jobs ──────────────────────────────────────
+
+enum JobStatus {
+  queued
+  running
+  paused
+  completed
+  failed
+  cancelled
+}
+
+model MigrationJob {
+  id             String    @id @default(cuid())
+  tenantId       String
+  mailboxId      String
+  sourceHost     String
+  sourcePort     Int
+  sourceSecure   Boolean   @default(true)
+  sourceUser     String
+  // credential handling: encrypted at rest with app-level key, wiped on completion
+  sourceSecretCipher String  @db.Text
+  totalMessages  Int       @default(0)
+  processed      Int       @default(0)
+  failed         Int       @default(0)
+  status         JobStatus @default(queued)
+  errorSummary   String?   @db.Text
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime  @default(now())
+
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mailbox        Mailbox   @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("migration_jobs")
+}
+
+model ExportJob {
+  id             String    @id @default(cuid())
+  tenantId       String
+  mailboxId      String
+  format         String                        // eml | mbox | zip
+  scope          String                        // full | folder | selection
+  scopeFolder    String?
+  totalMessages  Int       @default(0)
+  processed      Int       @default(0)
+  status         JobStatus @default(queued)
+  downloadUrl    String?                       // signed URL, ephemeral
+  expiresAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  tenant         Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mailbox        Mailbox   @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@map("export_jobs")
+}
+
+// ─── API credentials + webhooks + audit ───────────────────────────
+
+model ApiCredential {
+  id            String   @id @default(cuid())
+  tenantId      String
+  name          String
+  keyPrefix     String   @unique                // shown in dashboard
+  secretHash    String                          // argon2id of full secret
+  scopes        String[]                        // e.g. ["mail.send","mail.read","contacts.read"]
+  lastUsedAt    DateTime?
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  createdAt     DateTime @default(now())
+
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("api_credentials")
+}
+
+model Webhook {
+  id            String   @id @default(cuid())
+  tenantId      String
+  url           String
+  events        String[]                        // ["message.received", ...]
+  secret        String                          // shared HMAC secret
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  deliveries    WebhookDelivery[]
+
+  @@index([tenantId])
+  @@map("webhooks")
+}
+
+model WebhookDelivery {
+  id           String   @id @default(cuid())
+  webhookId    String
+  event        String
+  payload      Json
+  status       String                            // pending | success | failed
+  responseCode Int?
+  attemptCount Int      @default(0)
+  nextRetryAt  DateTime?
+  createdAt    DateTime @default(now())
+
+  webhook      Webhook  @relation(fields: [webhookId], references: [id], onDelete: Cascade)
+
+  @@index([webhookId, status])
+  @@map("webhook_deliveries")
+}
+
+model Contact {
+  id           String   @id @default(cuid())
+  tenantId     String
+  ownerUserId  String                              // contacts are per-user, tenant-scoped
+  firstName    String?
+  lastName     String?
+  displayName  String                              // required — used in autocomplete
+  email        String
+  phone        String?
+  company      String?
+  jobTitle     String?
+  notes        String?   @db.Text
+  groups       String[]  @default([])
+  starred      Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  owner        User      @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerUserId, email])
+  @@index([tenantId, ownerUserId])
+  @@index([tenantId, displayName])
+  @@map("contacts")
+}
+
+/* ─── Calendar ─────────────────────────────────────────────────── */
+
+model Calendar {
+  id           String   @id @default(cuid())
+  tenantId     String
+  ownerUserId  String
+  name         String
+  color        String   @default("#159447")
+  timezone     String   @default("UTC")               // IANA tz name
+  isDefault    Boolean  @default(false)
+  visible      Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  owner        User          @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  events       CalendarEvent[]
+
+  @@index([ownerUserId, tenantId])
+  @@map("calendars")
+}
+
+enum EventStatus {
+  confirmed
+  tentative
+  cancelled
+}
+
+/**
+ * A calendar event. `startsAt` / `endsAt` are stored in UTC; `timezone`
+ * remembers the IANA zone the user was in when creating so we can render
+ * consistently across devices. `allDay` events use midnight-to-midnight in
+ * the event's own tz; the API returns both.
+ *
+ * Recurrence is stored as an RFC-5545 RRULE string (`FREQ=WEEKLY;BYDAY=MO`
+ * etc). Expansion happens at query time via `services/recurrence.ts` — we
+ * never materialise every occurrence into rows.
+ *
+ * `masterId` + `recurrenceOverrideDate` support single-occurrence overrides
+ * ("edit just this one"): the child row overrides the master's occurrence
+ * on that date.
+ */
+model CalendarEvent {
+  id                    String       @id @default(cuid())
+  tenantId              String
+  calendarId            String
+  title                 String
+  description           String?      @db.Text
+  location              String?
+  startsAt              DateTime                                // UTC
+  endsAt                DateTime                                // UTC
+  timezone              String       @default("UTC")
+  allDay                Boolean      @default(false)
+  organizerEmail        String?
+  status                EventStatus  @default(confirmed)
+  rrule                 String?                                  // RFC-5545 RRULE
+  masterId              String?                                  // if this row overrides one occurrence of a series
+  recurrenceOverrideDate DateTime?                               // the original occurrence date (UTC)
+  reminderMinutes       Int?                                     // null = no reminder
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  calendar              Calendar     @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+  master                CalendarEvent? @relation("EventOverrides", fields: [masterId], references: [id], onDelete: Cascade)
+  overrides             CalendarEvent[] @relation("EventOverrides")
+  attendees             EventAttendee[]
+
+  @@index([calendarId, startsAt])
+  @@index([tenantId, startsAt])
+  @@map("calendar_events")
+}
+
+enum RsvpStatus {
+  needs_action
+  accepted
+  declined
+  tentative
+}
+
+model EventAttendee {
+  id            String     @id @default(cuid())
+  eventId       String
+  email         String
+  displayName   String?
+  isOrganizer   Boolean    @default(false)
+  rsvpStatus    RsvpStatus @default(needs_action)
+  respondedAt   DateTime?
+
+  event         CalendarEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, email])
+  @@index([eventId])
+  @@map("event_attendees")
+}
+
+/**
+ * Per-mailbox mail filters. Compiled into a Sieve script (see
+ * services/sieve.ts) and pushed to Dovecot via ManageSieve so filtering
+ * happens server-side — takes effect for webmail, IMAP clients, and mobile.
+ *
+ * conditions: [{ field: 'from'|'to'|'subject'|'body'|'any', op: 'contains'|'is'|'matches', value }]
+ * actions:    [{ kind: 'move'|'copy'|'flag'|'markRead'|'discard', target?: 'FolderName'|'\\Flagged' }]
+ * matchType:  'all' (AND) | 'any' (OR)
+ */
+model MailFilter {
+  id           String   @id @default(cuid())
+  tenantId     String
+  mailboxId    String
+  name         String
+  active       Boolean  @default(true)
+  priority     Int      @default(100)
+  matchType    String   @default("all")
+  conditions   Json
+  actions      Json
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  mailbox      Mailbox  @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@index([mailboxId, priority])
+  @@map("mail_filters")
+}
+
+/**
+ * Auto-reply / vacation config per mailbox. Implemented via the Sieve
+ * `vacation` extension — anti-loop + per-recipient throttling are handled
+ * by Sieve natively, so we cannot become a spam amplifier.
+ */
+model AutoReply {
+  id          String    @id @default(cuid())
+  tenantId    String
+  mailboxId   String    @unique
+  enabled     Boolean   @default(false)
+  subject     String    @default("Out of office")
+  body        String    @db.Text
+  startDate   DateTime?
+  endDate     DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  mailbox     Mailbox   @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+
+  @@map("auto_replies")
+}
+
+enum NotificationKind {
+  security_new_login
+  security_password_changed
+  security_mfa_enabled
+  security_mfa_disabled
+  domain_verified
+  mailbox_created
+  mailbox_password_reset
+  migration_completed
+  migration_failed
+  export_completed
+  quota_warning
+  calendar_reminder
+  system
+}
+
+/**
+ * User-facing notification. Kept lean — no email body content ever appears
+ * here (Cloud Mail treats mail as private). The `targetType`+`targetId`
+ * pair lets the frontend route the user to the relevant resource on click.
+ */
+model Notification {
+  id           String            @id @default(cuid())
+  userId       String
+  tenantId     String?
+  kind         NotificationKind
+  title        String
+  body         String?
+  targetType   String?
+  targetId     String?
+  readAt       DateTime?
+  createdAt    DateTime          @default(now())
+
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+  @@map("notifications")
+}
+
+model Signature {
+  id           String   @id @default(cuid())
+  tenantId     String
+  ownerUserId  String
+  name         String                              // "Personal", "Work", etc.
+  html         String   @db.Text                    // sanitised HTML — never trust on render
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  owner        User     @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId, tenantId])
+  @@map("signatures")
+}
+
+/**
+ * Uploaded signature images live here. Bytes stored on disk under
+ * /var/lib/cloudmail/uploads/signatures/<userId>/<id><.ext>. We keep the
+ * mime + size so the API can decide whether to serve/inline; the actual
+ * bytes are never returned by the JSON API — only through the dedicated
+ * download endpoint gated by owner check.
+ *
+ * `cidToken` is the `cid:<token>` value referenced from the signature HTML.
+ * When a message is sent, the mail service walks the outgoing HTML looking
+ * for these tokens and attaches the file as an inline nodemailer attachment
+ * with a matching Content-ID so external clients render them correctly.
+ */
+model SignatureImage {
+  id           String   @id @default(cuid())
+  ownerUserId  String
+  cidToken     String   @unique                    // random string used in cid: URIs
+  mimeType     String
+  sizeBytes    Int
+  storagePath  String                              // relative to UPLOAD_TMP_DIR/signatures/
+  createdAt    DateTime @default(now())
+
+  owner        User     @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId])
+  @@map("signature_images")
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  tenantId    String
+  actorUserId String?
+  action      String                            // "mailbox.create" | "domain.verified" | ...
+  targetType  String?
+  targetId    String?
+  metadata    Json?
+  ipAddress   String?
+  createdAt   DateTime @default(now())
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@map("audit_events")
+}

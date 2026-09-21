@@ -1,0 +1,10 @@
+# Postfix Postgres map: expand aliases to their real destinations.
+# destinationRaw is comma-separated (Postfix accepts commas). Filter inactive rows.
+# Prisma keeps column names as camelCase — double-quote them so PostgreSQL
+# treats them as case-sensitive identifiers rather than case-folding.
+
+user     = cloudmail_postfix
+password = REPLACED_BY_DEPLOY
+hosts    = 127.0.0.1
+dbname   = cloudmail
+query    = SELECT "destinationRaw" FROM aliases WHERE source='%s' AND active=true

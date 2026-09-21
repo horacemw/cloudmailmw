@@ -1,0 +1,143 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Base ─────────────────────────────────────────────────────────── */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  html,
+  body {
+    overflow-x: hidden;
+  }
+  html {
+    font-family: 'Poppins', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    color-scheme: light;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-surface-bg text-ink;
+  }
+  html.dark body {
+    background: #0F1512;
+    color: #F2F7F4;
+  }
+  ::selection {
+    background: #159447;
+    color: #fff;
+  }
+  /* Focus ring — visible only on keyboard focus */
+  :focus {
+    outline: none;
+  }
+  :focus-visible {
+    outline: 2px solid #159447;
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  button,
+  [role='button'] {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* ─── Scrollbars ───────────────────────────────────────────────────── */
+@layer utilities {
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #CFD9D3 transparent;
+  }
+  .scroll-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb {
+    background: #D6DEDA;
+    border-radius: 8px;
+  }
+  .scroll-thin::-webkit-scrollbar-thumb:hover {
+    background: #B7C4BD;
+  }
+  .scroll-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  html.dark .scroll-thin {
+    scrollbar-color: #2A342E transparent;
+  }
+  html.dark .scroll-thin::-webkit-scrollbar-thumb {
+    background: #2A342E;
+  }
+  html.dark .scroll-thin::-webkit-scrollbar-thumb:hover {
+    background: #38443C;
+  }
+
+  /* Text safe truncation utility */
+  .truncate-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Skeleton shimmer background */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(229, 234, 231, 0.5) 0%,
+      rgba(229, 234, 231, 1) 40%,
+      rgba(229, 234, 231, 0.5) 80%
+    );
+    background-size: 1000px 100%;
+  }
+  html.dark .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(30, 38, 33, 0.6) 0%,
+      rgba(43, 54, 47, 0.9) 40%,
+      rgba(30, 38, 33, 0.6) 80%
+    );
+    background-size: 1000px 100%;
+  }
+}
+
+/* ─── Prose (email body) ───────────────────────────────────────────── */
+@layer components {
+  .email-prose {
+    @apply text-[14.5px] leading-[1.65] text-ink;
+  }
+  .email-prose p {
+    @apply my-3;
+  }
+  .email-prose a {
+    @apply text-brand-700 underline underline-offset-2;
+  }
+  .email-prose h1 {
+    @apply text-lg font-semibold my-3;
+  }
+  .email-prose h2 {
+    @apply text-base font-semibold my-3;
+  }
+  .email-prose ul {
+    @apply list-disc pl-6 my-3;
+  }
+  .email-prose ol {
+    @apply list-decimal pl-6 my-3;
+  }
+  .email-prose blockquote {
+    @apply border-l-2 border-surface-border pl-3 text-ink-muted my-3;
+  }
+  html.dark .email-prose {
+    color: #F2F7F4;
+  }
+  html.dark .email-prose blockquote {
+    border-color: #232C27;
+    color: #9AA8A0;
+  }
+}

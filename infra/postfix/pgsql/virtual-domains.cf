@@ -1,0 +1,8 @@
+# Postfix Postgres map: which domains does Cloud Mail accept mail for?
+# The deploy script writes this file with 0640 root:postfix ownership.
+
+user     = cloudmail_postfix
+password = REPLACED_BY_DEPLOY
+hosts    = 127.0.0.1
+dbname   = cloudmail
+query    = SELECT 1 FROM domains WHERE name='%s' AND status IN ('verified','active')

@@ -1,0 +1,27 @@
+# Dovecot Postgres passdb — verifies mailbox passwords against the Cloud Mail
+# `mailboxes` table. The passwordHash column already stores an argon2id PHC
+# string that Dovecot understands natively.
+
+driver = pgsql
+connect = host=127.0.0.1 dbname=cloudmail user=cloudmail_dovecot password=REPLACED_BY_DEPLOY
+default_pass_scheme = ARGON2ID
+
+# %u = full user (address), %n = local, %d = domain
+# Prisma stores column names as camelCase — double-quote them so Postgres
+# treats them as case-sensitive identifiers rather than lowercasing.
+password_query = \
+  SELECT m.address AS user, m."passwordHash" AS password \
+  FROM mailboxes m \
+  JOIN domains d ON d.id = m."domainId" \
+  WHERE m.address = '%u' AND m.status = 'active' AND d.status IN ('verified','active')
+
+# Optional user query (we serve userdb from static template above); left here
+# in case operators want to move to DB-based userdb (custom UIDs per tenant).
+user_query = \
+  SELECT '/var/vmail/' || d.name || '/' || m."localPart" AS home, 'vmail' AS uid, 'vmail' AS gid, \
+         'maildir:~/Maildir' AS mail, \
+         '*:bytes=' || m."quotaBytes" AS quota_rule \
+  FROM mailboxes m JOIN domains d ON d.id = m."domainId" \
+  WHERE m.address = '%u'
+
+iterate_query = SELECT address AS user FROM mailboxes WHERE status='active'

@@ -1,0 +1,31 @@
+# ─── Cloud Mail — Postfix outbound relay overrides ─────────────────
+# Applied by `50-apply-smtp-relay.sh` via `postconf -e`.
+# Each `-o value` is one Postfix parameter. Placeholders replaced by the
+# apply script from /etc/cloudmail/deploy.env:
+#
+#   SMTP_RELAY_HOST
+#   SMTP_RELAY_PORT
+#   SMTP_RELAY_ENCRYPTION      # "starttls" | "tls"
+#
+# Credentials are NOT here — they live in /etc/postfix/sasl_passwd
+# (0600 root:root) and are consumed via hash: lookup.
+#
+# Sensible defaults:
+#   - TLS is REQUIRED (not "may") for the relay leg.
+#   - The relay's certificate chain is verified against the system CA bundle.
+#   - Only "plain" and "login" SASL mechanisms are accepted (both TLS-only).
+#   - Envelope sender is rewritten by /etc/postfix/generic if configured
+#     (some providers require the SMTP user itself as the envelope from).
+
+relayhost=[__SMTP_RELAY_HOST__]:__SMTP_RELAY_PORT__
+smtp_sasl_auth_enable=yes
+smtp_sasl_password_maps=hash:/etc/postfix/sasl_passwd
+smtp_sasl_security_options=noanonymous
+smtp_sasl_tls_security_options=noanonymous
+smtp_sasl_mechanism_filter=plain, login
+smtp_use_tls=yes
+smtp_tls_security_level=encrypt
+smtp_tls_wrappermode=__SMTP_TLS_WRAPPER__
+smtp_tls_CAfile=/etc/ssl/certs/ca-certificates.crt
+smtp_tls_loglevel=1
+smtp_generic_maps=hash:/etc/postfix/generic

@@ -1,0 +1,9 @@
+# Postfix Postgres map: does the given address correspond to a real mailbox?
+# Postfix uses the returned value as the on-disk path relative to virtual_mailbox_base;
+# with LMTP delivery to Dovecot, only presence matters — Dovecot decides storage.
+
+user     = cloudmail_postfix
+password = REPLACED_BY_DEPLOY
+hosts    = 127.0.0.1
+dbname   = cloudmail
+query    = SELECT '1' FROM mailboxes m JOIN domains d ON d.id = m."domainId" WHERE m.address='%s' AND m.status='active' AND d.status IN ('verified','active')
