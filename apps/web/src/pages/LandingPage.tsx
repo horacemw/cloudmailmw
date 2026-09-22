@@ -37,6 +37,13 @@ export function LandingPage(): JSX.Element {
           </nav>
           <div className="flex items-center gap-2">
             <Link
+              to="/admin/login"
+              className="hidden md:inline-flex h-9 items-center px-3 text-[12.5px] font-medium text-ink-faint hover:text-ink-muted dark:text-dark-faint dark:hover:text-dark-muted"
+              title="MailCloud platform administrator sign-in"
+            >
+              Platform admin
+            </Link>
+            <Link
               to="/login"
               className="hidden sm:inline-flex h-9 items-center px-4 text-[13.5px] font-medium text-ink-muted hover:text-ink dark:text-dark-muted dark:hover:text-dark-text"
             >
@@ -82,11 +89,12 @@ export function LandingPage(): JSX.Element {
                   to="/login"
                   className="inline-flex h-11 items-center gap-2 rounded-xl border border-surface-border bg-white px-6 text-[15px] font-semibold text-ink hover:bg-surface-hover dark:bg-dark-card dark:border-dark-border dark:text-dark-text dark:hover:bg-dark-hover"
                 >
-                  Sign in
+                  Sign in to my mailbox
                 </Link>
               </div>
               <p className="mt-4 text-[12.5px] text-ink-faint dark:text-dark-faint">
-                No credit card required. Bring your own domain.
+                Same sign-in for mailbox users and organisation admins — your role is detected after
+                login. <Link to="/admin/login" className="underline hover:text-ink-muted dark:hover:text-dark-muted">Platform administrator?</Link>
               </p>
             </div>
 
@@ -283,6 +291,8 @@ export function LandingPage(): JSX.Element {
           </div>
           <div className="text-[12.5px] text-ink-muted dark:text-dark-muted flex flex-wrap gap-x-5 gap-y-2 items-center">
             <span>&copy; {new Date().getFullYear()} Cloud Mail</span>
+            <Link to="/login" className="hover:text-ink dark:hover:text-dark-text">Sign in</Link>
+            <Link to="/admin/login" className="hover:text-ink dark:hover:text-dark-text">Platform admin</Link>
             <a href="mailto:hello@digiskills.live" className="inline-flex items-center gap-1 hover:text-ink dark:hover:text-dark-text"><Mail size={12}/> hello@digiskills.live</a>
           </div>
         </div>
