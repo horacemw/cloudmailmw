@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import {
   AlertCircle, Bell, Calendar as CalIcon, ChevronLeft, ChevronRight, Clock,
-  Download, Loader2, MapPin, Plus, Trash2, Users, X,
+  Download, Loader2, MapPin, Plus, Trash2, Upload, Users, X,
 } from 'lucide-react';
 import { PageHeader } from './DashboardShell';
 import { useResource } from '@/lib/hooks';
@@ -112,6 +112,7 @@ export function CalendarPage(): JSX.Element {
                   <span aria-hidden style={{ background: c.color }} className="h-3 w-3 rounded-full shrink-0" />
                   <span className="flex-1 truncate">{c.name}</span>
                   {c.isDefault && <span className="text-[10px] uppercase tracking-wider text-ink-muted">default</span>}
+                  <ImportIcsButton calendarId={c.id} />
                   <a href={`/v1/calendars/${c.id}/ics`} title="Download .ics" className="text-ink-muted hover:text-ink">
                     <Download size={12} />
                   </a>
@@ -578,4 +579,69 @@ function presetToRrule(p: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'): s
 function rruleToPreset(_r: string | null): 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly' {
   // Simple round-trip for the presets we generate. Anything else stays 'none'.
   return 'none';
+}
+
+function ImportIcsButton({ calendarId }: { calendarId: string }): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const inputRef = useState<HTMLInputElement | null>(null);
+  const push = useUIStoreImp();
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      push({ title: 'ICS file over 5 MB', tone: 'warning' });
+      return;
+    }
+    setBusy(true);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await api<{ imported: number; skipped: number }>(
+        `/v1/calendars/${calendarId}/import`,
+        { method: 'POST', body: form },
+      );
+      push({
+        title: `Imported ${res.imported} event${res.imported === 1 ? '' : 's'}`,
+        description: res.skipped > 0 ? `${res.skipped} skipped (duplicates or invalid)` : undefined,
+        tone: 'success',
+      });
+      // Trigger a page reload of events by dispatching a custom event the
+      // parent already listens to via its react-query-ish `useResource`.
+      window.dispatchEvent(new CustomEvent('cloudmail:refresh-events'));
+    } catch (err) {
+      push({
+        title: 'ICS import failed',
+        description: err instanceof ApiError ? err.message : 'Please try again',
+        tone: 'danger',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <label className="text-ink-muted hover:text-ink cursor-pointer" title="Import .ics file">
+      {busy ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+      <input
+        ref={(el) => { inputRef[1](el); }}
+        type="file"
+        accept=".ics,text/calendar"
+        className="hidden"
+        onChange={(e) => void handleFile(e)}
+      />
+    </label>
+  );
+}
+
+// Small local shim to avoid another import at the bottom of the file.
+function useUIStoreImp(): (t: { title: string; description?: string; tone?: 'success' | 'warning' | 'danger' }) => void {
+  // Delegate to the real store — CalendarPage already imports @/store/useUIStore.
+  const push = (window as unknown as { __cloudmailPushToast?: (t: unknown) => void }).__cloudmailPushToast;
+  if (typeof push === 'function') return push as (t: { title: string; description?: string; tone?: 'success' | 'warning' | 'danger' }) => void;
+  // Fallback: fetch from the store module at call time.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+  const mod = require('@/store/useUIStore') as { useUIStore: { getState: () => { pushToast: (t: unknown) => void } } };
+  return mod.useUIStore.getState().pushToast as (t: { title: string; description?: string; tone?: 'success' | 'warning' | 'danger' }) => void;
 }

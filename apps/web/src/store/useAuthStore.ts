@@ -46,6 +46,7 @@ interface AuthState {
   }) => Promise<void>;
   logout: () => Promise<void>;
   setActiveTenant: (t: TenantSummary) => void;
+  setUser: (u: CurrentUser) => void;
   clearError: () => void;
 }
 
@@ -181,6 +182,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     setCurrentTenant(t.slug);
     set({ activeTenant: t });
   },
+
+  setUser: (u) => set({ user: u }),
 
   clearError: () => set({ error: null }),
 }));

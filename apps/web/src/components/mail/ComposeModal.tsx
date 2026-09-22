@@ -317,23 +317,50 @@ export function ComposeModal(): JSX.Element | null {
 
         {/* Footer */}
         <div className="flex flex-wrap items-center gap-2 px-3 py-2.5 border-t border-surface-divider dark:border-dark-divider">
-          <div className="inline-flex rounded-lg overflow-hidden">
-            <Button
-              variant="primary"
-              size="md"
-              onClick={handleSend}
-              className="rounded-r-none pr-4"
-            >
-              Send
-            </Button>
-            <button
-              aria-label="Send options"
-              className="bg-brand text-white hover:bg-brand-600 w-9 rounded-r-lg border-l border-white/20 flex items-center justify-center"
-              onClick={() => push({ title: 'Scheduled send — coming soon' })}
-            >
-              <ChevronDown size={14} />
-            </button>
-          </div>
+          <SendSplitButton
+            onSendNow={handleSend}
+            onScheduled={async (sendAt) => {
+              const liveMode = useLiveMailStore.getState().mode;
+              if (liveMode !== 'ready') {
+                push({ title: 'Scheduled send needs live mailbox', tone: 'warning' });
+                return;
+              }
+              if (!compose.to.trim()) {
+                push({ title: 'Please add at least one recipient', tone: 'warning' });
+                return;
+              }
+              try {
+                const htmlBody = activeSignatureHtml
+                  ? composeBodyWithHtmlSignature(compose.body, activeSignatureHtml)
+                  : bodyToHtml(compose.body, signature);
+                const { api } = await import('@/lib/apiClient');
+                await api('/v1/mail/schedule', {
+                  method: 'POST',
+                  body: JSON.stringify({
+                    to: parseContacts(compose.to).map((c) => c.email),
+                    cc: compose.cc ? parseContacts(compose.cc).map((c) => c.email) : undefined,
+                    bcc: compose.bcc ? parseContacts(compose.bcc).map((c) => c.email) : undefined,
+                    subject: compose.subject || '(no subject)',
+                    text: compose.body,
+                    html: htmlBody,
+                    sendAt: sendAt.toISOString(),
+                  }),
+                });
+                if (draftIdRef.current) deleteDraft(draftIdRef.current);
+                push({
+                  title: `Scheduled for ${sendAt.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`,
+                  tone: 'success',
+                });
+                closeCompose();
+              } catch (err) {
+                push({
+                  title: 'Scheduling failed',
+                  description: err instanceof Error ? err.message : 'Please try again',
+                  tone: 'danger',
+                });
+              }
+            }}
+          />
           <FormatToolbar />
           {signatures.length > 0 && (
             <label className="flex items-center gap-1 text-[12px] text-ink-muted dark:text-dark-muted ml-1">
@@ -491,6 +518,140 @@ function composeBodyWithHtmlSignature(body: string, signatureHtml: string): stri
     .map((p) => `<p>${p.replace(/\n/g, '<br/>')}</p>`)
     .join('');
   return `${paragraphs}<br/><div class="cloudmail-signature">${signatureHtml}</div>`;
+}
+
+function SendSplitButton({
+  onSendNow,
+  onScheduled,
+}: {
+  onSendNow: () => void;
+  onScheduled: (sendAt: Date) => void | Promise<void>;
+}): JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [customOpen, setCustomOpen] = useState(false);
+  const [customValue, setCustomValue] = useState('');
+  const containerRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open && !customOpen) return;
+    const onDoc = (e: MouseEvent): void => {
+      if (!containerRef.current?.contains(e.target as Node)) {
+        setOpen(false);
+        setCustomOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open, customOpen]);
+
+  // Preset "Tomorrow morning" = tomorrow 08:00 local.
+  const tomorrowMorning = (): Date => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(8, 0, 0, 0);
+    return d;
+  };
+  // "This afternoon" = today 14:00 local (or tomorrow if past).
+  const laterToday = (): Date => {
+    const d = new Date();
+    if (d.getHours() >= 13) d.setDate(d.getDate() + 1);
+    d.setHours(14, 0, 0, 0);
+    return d;
+  };
+  const mondayMorning = (): Date => {
+    const d = new Date();
+    const daysUntilMon = (8 - d.getDay()) % 7 || 7;
+    d.setDate(d.getDate() + daysUntilMon);
+    d.setHours(8, 0, 0, 0);
+    return d;
+  };
+
+  const fmt = (d: Date): string =>
+    d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  const submitCustom = (): void => {
+    const d = new Date(customValue);
+    if (Number.isNaN(d.getTime()) || d.getTime() < Date.now() + 30_000) return;
+    void onScheduled(d);
+    setCustomOpen(false);
+    setOpen(false);
+  };
+
+  return (
+    <div ref={containerRef} className="relative inline-flex rounded-lg overflow-hidden">
+      <Button variant="primary" size="md" onClick={onSendNow} className="rounded-r-none pr-4">
+        Send
+      </Button>
+      <button
+        aria-label="Send options"
+        className="bg-brand text-white hover:bg-brand-600 w-9 rounded-r-lg border-l border-white/20 flex items-center justify-center"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <ChevronDown size={14} />
+      </button>
+      {open && !customOpen && (
+        <div className="absolute bottom-full left-0 mb-1 w-64 rounded-xl bg-white dark:bg-dark-card border border-surface-border dark:border-dark-border shadow-pop overflow-hidden z-40">
+          <button
+            className="w-full text-left px-3.5 py-2.5 text-[13px] hover:bg-surface-hover dark:hover:bg-dark-hover"
+            onClick={() => { void onScheduled(laterToday()); setOpen(false); }}
+          >
+            <div className="font-medium">Later today</div>
+            <div className="text-[11.5px] text-ink-muted dark:text-dark-muted">{fmt(laterToday())}</div>
+          </button>
+          <button
+            className="w-full text-left px-3.5 py-2.5 text-[13px] hover:bg-surface-hover dark:hover:bg-dark-hover"
+            onClick={() => { void onScheduled(tomorrowMorning()); setOpen(false); }}
+          >
+            <div className="font-medium">Tomorrow morning</div>
+            <div className="text-[11.5px] text-ink-muted dark:text-dark-muted">{fmt(tomorrowMorning())}</div>
+          </button>
+          <button
+            className="w-full text-left px-3.5 py-2.5 text-[13px] hover:bg-surface-hover dark:hover:bg-dark-hover"
+            onClick={() => { void onScheduled(mondayMorning()); setOpen(false); }}
+          >
+            <div className="font-medium">Monday morning</div>
+            <div className="text-[11.5px] text-ink-muted dark:text-dark-muted">{fmt(mondayMorning())}</div>
+          </button>
+          <div className="h-px bg-surface-divider dark:bg-dark-divider" />
+          <button
+            className="w-full text-left px-3.5 py-2.5 text-[13px] font-medium text-brand-700 dark:text-brand-300 hover:bg-brand-50 dark:hover:bg-brand-900/20"
+            onClick={() => setCustomOpen(true)}
+          >
+            Pick date & time…
+          </button>
+        </div>
+      )}
+      {customOpen && (
+        <div className="absolute bottom-full left-0 mb-1 w-72 rounded-xl bg-white dark:bg-dark-card border border-surface-border dark:border-dark-border shadow-pop p-3 z-40">
+          <label className="block text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted dark:text-dark-muted mb-1">
+            Send at (your timezone)
+          </label>
+          <input
+            type="datetime-local"
+            value={customValue}
+            min={new Date(Date.now() + 60_000).toISOString().slice(0, 16)}
+            onChange={(e) => setCustomValue(e.target.value)}
+            className="w-full h-10 rounded-lg border border-surface-border bg-white dark:bg-dark-panel dark:border-dark-border px-3 text-[13.5px] outline-none focus:border-brand"
+          />
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              className="h-8 px-3 rounded-lg text-[12.5px] border border-surface-border dark:border-dark-border hover:bg-surface-hover dark:hover:bg-dark-hover"
+              onClick={() => { setCustomOpen(false); setOpen(false); }}
+            >
+              Cancel
+            </button>
+            <button
+              disabled={!customValue}
+              className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-brand text-white hover:bg-brand-600 disabled:opacity-50"
+              onClick={submitCustom}
+            >
+              Schedule
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function draftPayload(

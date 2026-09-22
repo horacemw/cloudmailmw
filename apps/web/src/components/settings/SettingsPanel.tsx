@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useAuthStore } from '@/store/useAuthStore';
+import { api, ApiError } from '@/lib/apiClient';
 import {
   Bell,
   Keyboard,
@@ -110,29 +112,7 @@ export function SettingsPanel(): JSX.Element | null {
 }
 
 function ProfileSection(): JSX.Element {
-  const push = useUIStore((s) => s.pushToast);
-  return (
-    <div className="max-w-xl">
-      <div className="flex items-center gap-4">
-        <Avatar name={CURRENT_USER.name} email={CURRENT_USER.email} size="xl" />
-        <div>
-          <p className="text-[15px] font-semibold text-ink dark:text-dark-text">
-            {CURRENT_USER.name}
-          </p>
-          <p className="text-[13px] text-ink-muted dark:text-dark-muted">{CURRENT_USER.email}</p>
-          <Button size="sm" variant="secondary" className="mt-2" onClick={() => push({ title: 'Photo upload — coming soon' })}>
-            Change photo
-          </Button>
-        </div>
-      </div>
-      <div className="mt-8 grid gap-4 sm:grid-cols-2">
-        <Field label="Display name" value={CURRENT_USER.name} readOnly />
-        <Field label="Primary email" value={CURRENT_USER.email} readOnly />
-        <Field label="Recovery email" placeholder="Add a recovery email" />
-        <Field label="Language" value="English (Malawi)" readOnly />
-      </div>
-    </div>
-  );
+  return <ProfileSectionImpl />;
 }
 
 function AppearanceSection(): JSX.Element {
@@ -304,5 +284,129 @@ function Field({
         )}
       />
     </label>
+  );
+}
+
+function ProfileSectionImpl(): JSX.Element {
+  const push = useUIStore((s) => s.pushToast);
+  const user = useAuthStore((s) => s.user);
+  const setUser = useAuthStore((s) => s.setUser);
+  const [busy, setBusy] = useState<'upload' | 'remove' | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+
+  const displayName = user?.name ?? CURRENT_USER.name;
+  const displayEmail = user?.email ?? CURRENT_USER.email;
+  const avatarUrl = previewUrl ?? user?.avatarUrl ?? null;
+
+  const handleChoose = (): void => fileRef.current?.click();
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // reset so re-selecting the same file works
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      push({ title: 'Only JPEG, PNG, or WebP', tone: 'warning' });
+      return;
+    }
+    if (file.size > 1 * 1024 * 1024) {
+      push({ title: 'Image is over 1 MB', tone: 'warning' });
+      return;
+    }
+    // Local preview for instant feedback while the upload flies.
+    setPreviewUrl(URL.createObjectURL(file));
+    setBusy('upload');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const res = await api<{ avatarUrl: string }>('/v1/me/avatar', { method: 'POST', body: form });
+      if (user) setUser({ ...user, avatarUrl: res.avatarUrl });
+      push({ title: 'Photo updated', tone: 'success' });
+      setPreviewUrl(null);
+    } catch (err) {
+      setPreviewUrl(null);
+      push({
+        title: 'Upload failed',
+        description: err instanceof ApiError ? err.message : 'Please try again',
+        tone: 'danger',
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleRemove = async (): Promise<void> => {
+    if (!avatarUrl) return;
+    setBusy('remove');
+    try {
+      await api('/v1/me/avatar', { method: 'DELETE' });
+      if (user) setUser({ ...user, avatarUrl: null });
+      setPreviewUrl(null);
+      push({ title: 'Photo removed', tone: 'success' });
+    } catch (err) {
+      push({
+        title: 'Could not remove photo',
+        description: err instanceof ApiError ? err.message : 'Please try again',
+        tone: 'danger',
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="max-w-xl">
+      <div className="flex items-center gap-4">
+        {avatarUrl ? (
+          <img
+            src={avatarUrl}
+            alt={displayName}
+            className="h-16 w-16 rounded-full object-cover ring-1 ring-surface-border dark:ring-dark-border"
+          />
+        ) : (
+          <Avatar name={displayName} email={displayEmail} size="xl" />
+        )}
+        <div>
+          <p className="text-[15px] font-semibold text-ink dark:text-dark-text">{displayName}</p>
+          <p className="text-[13px] text-ink-muted dark:text-dark-muted">{displayEmail}</p>
+          <div className="mt-2 flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={busy !== null}
+              onClick={handleChoose}
+            >
+              {busy === 'upload' ? 'Uploading…' : avatarUrl ? 'Change photo' : 'Upload photo'}
+            </Button>
+            {avatarUrl && (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy !== null}
+                onClick={() => void handleRemove()}
+              >
+                Remove
+              </Button>
+            )}
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            className="hidden"
+            onChange={(e) => void handleFile(e)}
+          />
+          <p className="mt-1 text-[11px] text-ink-faint dark:text-dark-faint">
+            JPEG, PNG or WebP, up to 1 MB.
+          </p>
+        </div>
+      </div>
+      <div className="mt-8 grid gap-4 sm:grid-cols-2">
+        <Field label="Display name" value={displayName} readOnly />
+        <Field label="Primary email" value={displayEmail} readOnly />
+        <Field label="Recovery email" placeholder="Add a recovery email" />
+        <Field label="Language" value="English (Malawi)" readOnly />
+      </div>
+    </div>
   );
 }
