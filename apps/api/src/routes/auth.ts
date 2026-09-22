@@ -326,6 +326,12 @@ If you didn't request this, you can ignore this email — your password won't ch
     preHandler: [fastify.requireAuth],
     handler: async (req) => {
       const user = req.currentUser!;
+      // Env-var bootstrap: an email listed in PLATFORM_ADMIN_EMAILS is treated
+      // as a platform admin even if the DB flag hasn't been flipped yet. This
+      // must stay in sync with requirePlatformAdmin in routes/admin.ts.
+      const bootstrapEmails = (process.env.PLATFORM_ADMIN_EMAILS ?? '')
+        .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+      const isPlatformAdmin = user.isPlatformAdmin || bootstrapEmails.includes(user.email.toLowerCase());
       const memberships = await prisma.tenantMember.findMany({
         where: { userId: user.id },
         include: { tenant: true },
@@ -337,6 +343,8 @@ If you didn't request this, you can ignore this email — your password won't ch
           name: user.name,
           avatarUrl: user.avatarUrl,
           lastLoginAt: user.lastLoginAt,
+          isPlatformAdmin,
+          mfaEnabled: user.mfaEnabled,
         },
         tenants: memberships.map((m) => ({
           id: m.tenant.id,

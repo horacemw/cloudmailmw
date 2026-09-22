@@ -261,11 +261,18 @@ async function main() {
   else bad(`ISOLATION BREACH: B sees ${keyListB.body.keys.length} of A's keys`);
 
   section('16. Admin — non-admin blocked from /v1/admin/*');
-  for (const path of ['/v1/admin/overview', '/v1/admin/tenants', '/v1/admin/mailboxes', '/v1/admin/audit', '/v1/admin/queue', '/v1/admin/mail-relay']) {
+  for (const path of ['/v1/admin/overview', '/v1/admin/tenants', '/v1/admin/mailboxes', '/v1/admin/audit', '/v1/admin/queue', '/v1/admin/mail-relay', '/v1/admin/system']) {
     const r = await api(path, { headers: { authorization: `Bearer ${A.token}`, 'x-cloudmail-tenant': A.tenantSlug } });
     if (r.status === 403) ok(`${path} → 403`);
     else bad(`ADMIN LEAK: ${path} returned ${r.status} for non-admin`);
   }
+
+  section('16a. /v1/auth/me carries platform-admin + MFA flags');
+  const meA = await api('/v1/auth/me', { headers: { authorization: `Bearer ${A.token}` } });
+  if (meA.body?.user?.isPlatformAdmin === false) ok(`A.user.isPlatformAdmin === false (correct for signup)`);
+  else bad(`ME LEAK: A.user.isPlatformAdmin = ${JSON.stringify(meA.body?.user?.isPlatformAdmin)} — should be false`);
+  if (meA.body?.user?.mfaEnabled === false) ok(`A.user.mfaEnabled === false (correct pre-enrol)`);
+  else bad(`ME LEAK: A.user.mfaEnabled = ${JSON.stringify(meA.body?.user?.mfaEnabled)} — should be false`);
 
   section('17. Notifications — endpoints + isolation + mailbox-create producer');
   // Fetch A's list (creating tenants + mailboxes has fired notifications for A).

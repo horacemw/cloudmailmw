@@ -1,16 +1,22 @@
-import { Building2, HardDrive, Mail, MailPlus, MonitorSmartphone, ScrollText, Users } from 'lucide-react';
+import { AlertTriangle, Building2, HardDrive, KeyRound, Mail, MailPlus, MonitorSmartphone, ScrollText, ShieldCheck, Users } from 'lucide-react';
 import { useResource } from '@/lib/hooks';
 import { humanFileSize } from '@/lib/utils';
 
 interface Overview {
   counts: {
     tenants: number;
+    activeTenants: number;
+    suspendedTenants: number;
     users: number;
     domains: number;
+    verifiedDomains: number;
     mailboxes: number;
+    activeMailboxes: number;
     aliases: number;
     activeMigrations: number;
     activeExports: number;
+    activeSessions: number;
+    failedLoginsLast24h: number;
     storageUsedBytes: string;
   };
   recentAudit: Array<{
@@ -39,12 +45,19 @@ export function AdminOverviewPage(): JSX.Element {
       {data && (
         <>
           <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat icon={<Building2 size={16} />} label="Tenants" value={data.counts.tenants} />
+            <Stat icon={<Building2 size={16} />} label="Tenants" value={data.counts.tenants} sub={`${data.counts.activeTenants} active · ${data.counts.suspendedTenants} suspended`} />
             <Stat icon={<Users size={16} />} label="Users" value={data.counts.users} />
-            <Stat icon={<MailPlus size={16} />} label="Domains" value={data.counts.domains} />
-            <Stat icon={<Mail size={16} />} label="Mailboxes" value={data.counts.mailboxes} />
+            <Stat icon={<MailPlus size={16} />} label="Domains" value={data.counts.domains} sub={`${data.counts.verifiedDomains} verified`} />
+            <Stat icon={<Mail size={16} />} label="Mailboxes" value={data.counts.mailboxes} sub={`${data.counts.activeMailboxes} active`} />
             <Stat icon={<MonitorSmartphone size={16} />} label="Aliases" value={data.counts.aliases} />
             <Stat icon={<HardDrive size={16} />} label="Storage used" value={humanFileSize(Number(data.counts.storageUsedBytes))} />
+            <Stat icon={<KeyRound size={16} />} label="Active sessions" value={data.counts.activeSessions} />
+            <Stat
+              icon={data.counts.failedLoginsLast24h > 0 ? <AlertTriangle size={16} /> : <ShieldCheck size={16} />}
+              label="Failed logins (24h)"
+              value={data.counts.failedLoginsLast24h}
+              tone={data.counts.failedLoginsLast24h > 0 ? 'warning' : 'ok'}
+            />
             <Stat icon={<ScrollText size={16} />} label="Active migrations" value={data.counts.activeMigrations} />
             <Stat icon={<ScrollText size={16} />} label="Active exports" value={data.counts.activeExports} />
           </div>
@@ -82,13 +95,23 @@ export function AdminOverviewPage(): JSX.Element {
   );
 }
 
-function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string | number }): JSX.Element {
+function Stat({
+  icon, label, value, sub, tone,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string | number;
+  sub?: string;
+  tone?: 'ok' | 'warning';
+}): JSX.Element {
+  const iconClass = tone === 'warning' ? 'text-state-warning' : 'text-brand-700 dark:text-brand-300';
   return (
     <div className="rounded-xl border border-surface-border bg-white p-4 dark:bg-dark-card dark:border-dark-border">
       <div className="flex items-center gap-2 text-ink-muted text-[12.5px] dark:text-dark-muted">
-        <span className="text-brand-700 dark:text-brand-300">{icon}</span> {label}
+        <span className={iconClass}>{icon}</span> {label}
       </div>
       <div className="mt-1.5 text-[22px] font-semibold tabular-nums">{value}</div>
+      {sub && <div className="mt-0.5 text-[11.5px] text-ink-muted dark:text-dark-muted">{sub}</div>}
     </div>
   );
 }

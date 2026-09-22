@@ -49,6 +49,15 @@ const schema = z.object({
   CLOUDMAIL_INITIAL_MAIL_HOST: z.string().default('mail.digiskills.live'),
   CLOUDMAIL_INITIAL_IPV4: z.string().default('167.233.22.55'),
 
+  // Operator flips this to 'true' after the initial platform admin enrols
+  // MFA. When true, any admin API call by a platform admin without mfaEnabled
+  // returns 403 mfa_required — closing the "admin without 2FA" gap without
+  // locking out the initial bootstrap admin before they can enrol.
+  PLATFORM_ADMIN_REQUIRE_MFA: z
+    .string()
+    .default('false')
+    .transform((v) => v === 'true'),
+
   UPLOAD_TMP_DIR: z.string().default('./.uploads'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 });

@@ -14,6 +14,8 @@ export interface CurrentUser {
   name: string;
   avatarUrl: string | null;
   lastLoginAt: string | null;
+  isPlatformAdmin: boolean;
+  mfaEnabled: boolean;
 }
 
 export interface TenantSummary {

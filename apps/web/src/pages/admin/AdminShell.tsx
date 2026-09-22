@@ -1,7 +1,9 @@
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Building2, Mail, ScrollText, Server, Shield, Users } from 'lucide-react';
+import { useEffect } from 'react';
+import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { ArrowLeft, Activity, Building2, Mail, ScrollText, Server, Shield, Users } from 'lucide-react';
 import { Logo } from '@/components/ui/Logo';
 import { useAuthStore } from '@/store/useAuthStore';
+import { useUIStore } from '@/store/useUIStore';
 import { cn } from '@/lib/utils';
 
 const NAV = [
@@ -9,13 +11,30 @@ const NAV = [
   { to: '/admin/tenants', label: 'Tenants', icon: Building2 },
   { to: '/admin/mailboxes', label: 'Mailboxes', icon: Mail },
   { to: '/admin/queue', label: 'Mail queue', icon: Server },
+  { to: '/admin/system', label: 'System', icon: Activity },
   { to: '/admin/audit', label: 'Audit log', icon: ScrollText },
   { to: '/admin/relay', label: 'Mail relay', icon: Users },
 ];
 
 export function AdminShell(): JSX.Element {
   const user = useAuthStore((s) => s.user);
+  const ready = useAuthStore((s) => s.ready);
+  const push = useUIStore((s) => s.pushToast);
   const navigate = useNavigate();
+
+  // Non-platform-admin users get bounced to their tenant dashboard. The
+  // backend enforces the same rule (403 platform_admin_only on every /v1/admin
+  // route) — this is just UX so they don't see the shell flash + broken
+  // fetches. Wait for bootstrap to finish so we don't redirect during initial
+  // silent refresh.
+  useEffect(() => {
+    if (ready && user && !user.isPlatformAdmin) {
+      push({ title: 'Platform admin access required', tone: 'warning' });
+    }
+  }, [ready, user, push]);
+
+  if (ready && user && !user.isPlatformAdmin) return <Navigate to="/dashboard" replace />;
+  if (ready && !user) return <Navigate to="/login" replace />;
 
   return (
     <div className="min-h-screen bg-surface-bg dark:bg-dark-bg text-ink dark:text-dark-text">

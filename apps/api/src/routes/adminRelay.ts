@@ -4,6 +4,7 @@ import net from 'node:net';
 import tls from 'node:tls';
 import { errors } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
+import { requirePlatformAdmin } from './admin.js';
 
 /**
  * Platform-admin view of the outbound SMTP delivery path.
@@ -58,18 +59,6 @@ const routes: FastifyPluginAsync = async (fastify) => {
     },
   });
 };
-
-async function requirePlatformAdmin(req: import('fastify').FastifyRequest): Promise<void> {
-  const list = (process.env.PLATFORM_ADMIN_EMAILS ?? '')
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  const user = req.currentUser;
-  if (!user) throw errors.unauthorized();
-  if (list.length === 0 || !list.includes(user.email.toLowerCase())) {
-    throw errors.forbidden('platform_admin_only', 'Platform administrator access required');
-  }
-}
 
 async function readModeFile(): Promise<'direct' | 'relay'> {
   try {
