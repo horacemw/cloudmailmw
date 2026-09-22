@@ -60,8 +60,8 @@ export function AuthLayout({
               ))}
             </ul>
           </div>
-          <p className="mt-6 text-[12.5px] text-ink-muted dark:text-dark-muted italic">
-            "Set up in under 10 minutes — DNS instructions were unambiguous, migration from Gmail Just Worked."
+          <p className="mt-6 text-[12.5px] text-ink-muted dark:text-dark-muted">
+            Standards-based IMAP + SMTP on your own domain. No vendor lock-in — export MBOX/EML any time.
           </p>
         </div>
       </div>
