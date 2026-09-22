@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import {
   AlertCircle, Bell, Calendar as CalIcon, ChevronLeft, ChevronRight, Clock,
   Download, Loader2, MapPin, Plus, Trash2, Upload, Users, X,
 } from 'lucide-react';
 import { PageHeader } from './DashboardShell';
 import { useResource } from '@/lib/hooks';
-import { api, ApiError } from '@/lib/apiClient';
+import { api, apiFetchBlob, ApiError } from '@/lib/apiClient';
+import { useUIStore } from '@/store/useUIStore';
 import { Modal } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { cn } from '@/lib/utils';
@@ -113,9 +114,7 @@ export function CalendarPage(): JSX.Element {
                   <span className="flex-1 truncate">{c.name}</span>
                   {c.isDefault && <span className="text-[10px] uppercase tracking-wider text-ink-muted">default</span>}
                   <ImportIcsButton calendarId={c.id} />
-                  <a href={`/v1/calendars/${c.id}/ics`} title="Download .ics" className="text-ink-muted hover:text-ink">
-                    <Download size={12} />
-                  </a>
+                  <ExportIcsButton calendarId={c.id} calendarName={c.name} />
                 </li>
               ))}
             </ul>
@@ -583,8 +582,8 @@ function rruleToPreset(_r: string | null): 'none' | 'daily' | 'weekly' | 'monthl
 
 function ImportIcsButton({ calendarId }: { calendarId: string }): JSX.Element {
   const [busy, setBusy] = useState(false);
-  const inputRef = useState<HTMLInputElement | null>(null);
-  const push = useUIStoreImp();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const push = useUIStore((s) => s.pushToast);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
     const file = e.target.files?.[0];
@@ -607,8 +606,9 @@ function ImportIcsButton({ calendarId }: { calendarId: string }): JSX.Element {
         description: res.skipped > 0 ? `${res.skipped} skipped (duplicates or invalid)` : undefined,
         tone: 'success',
       });
-      // Trigger a page reload of events by dispatching a custom event the
-      // parent already listens to via its react-query-ish `useResource`.
+      // Signal the CalendarPage to re-fetch. useResource listens for its own
+      // deps change; a full-page refetch is triggered by parent state anyway,
+      // but we surface a dispatch here so a future subscriber can hook in.
       window.dispatchEvent(new CustomEvent('cloudmail:refresh-events'));
     } catch (err) {
       push({
@@ -625,7 +625,7 @@ function ImportIcsButton({ calendarId }: { calendarId: string }): JSX.Element {
     <label className="text-ink-muted hover:text-ink cursor-pointer" title="Import .ics file">
       {busy ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
       <input
-        ref={(el) => { inputRef[1](el); }}
+        ref={inputRef}
         type="file"
         accept=".ics,text/calendar"
         className="hidden"
@@ -635,13 +635,55 @@ function ImportIcsButton({ calendarId }: { calendarId: string }): JSX.Element {
   );
 }
 
-// Small local shim to avoid another import at the bottom of the file.
-function useUIStoreImp(): (t: { title: string; description?: string; tone?: 'success' | 'warning' | 'danger' }) => void {
-  // Delegate to the real store — CalendarPage already imports @/store/useUIStore.
-  const push = (window as unknown as { __cloudmailPushToast?: (t: unknown) => void }).__cloudmailPushToast;
-  if (typeof push === 'function') return push as (t: { title: string; description?: string; tone?: 'success' | 'warning' | 'danger' }) => void;
-  // Fallback: fetch from the store module at call time.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
-  const mod = require('@/store/useUIStore') as { useUIStore: { getState: () => { pushToast: (t: unknown) => void } } };
-  return mod.useUIStore.getState().pushToast as (t: { title: string; description?: string; tone?: 'success' | 'warning' | 'danger' }) => void;
+/**
+ * ICS download button. Cannot be a plain <a href="/v1/calendars/:id/ics">
+ * because /v1/* requires Authorization: Bearer — a direct link would 401.
+ * We fetch as a Blob through the API client (which attaches the access
+ * token) and trigger a save-as via a temporary <a download>.
+ */
+function ExportIcsButton({
+  calendarId,
+  calendarName,
+}: {
+  calendarId: string;
+  calendarName: string;
+}): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const push = useUIStore((s) => s.pushToast);
+
+  const download = async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const blob = await apiFetchBlob(`/v1/calendars/${calendarId}/ics`);
+      const safeName = calendarName.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'calendar';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${safeName}.ics`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5_000);
+    } catch (err) {
+      push({
+        title: 'Download failed',
+        description: err instanceof ApiError ? err.message : 'Please try again',
+        tone: 'danger',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void download()}
+      title="Download .ics"
+      className="text-ink-muted hover:text-ink"
+      disabled={busy}
+    >
+      {busy ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+    </button>
+  );
 }
