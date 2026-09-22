@@ -10,8 +10,12 @@ import { logger } from '../lib/logger.js';
  * Postfix instance on port 25 with no auth — Postfix's `mynetworks =
  * 127.0.0.0/8` permits unauthenticated local relay.
  *
- * The From address defaults to no-reply@<initial-mail-host>. That domain
- * has DKIM + SPF + DMARC already published (it's the server's own hostname).
+ * The From address defaults to no-reply@<initial-mail-host>. Whether that
+ * domain authenticates on the recipient side depends on operator-published
+ * DNS (SPF TXT with the server IP, `<selector>._domainkey.<domain>` TXT
+ * with the Rspamd public key, and _dmarc TXT). Verified on 2026-09-22:
+ * publishing those three records is required before Gmail/Outlook will
+ * accept mail from a fresh sending host.
  */
 
 let cachedTransport: nodemailer.Transporter | null = null;
