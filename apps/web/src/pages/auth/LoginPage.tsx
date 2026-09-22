@@ -3,6 +3,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { AlertCircle, Eye, EyeOff, Loader2, LogIn, ShieldCheck } from 'lucide-react';
 import { AuthLayout } from './AuthLayout';
 import { useAuthStore } from '@/store/useAuthStore';
+import { postLoginDestination } from '@/lib/roleRouting';
 
 export function LoginPage(): JSX.Element {
   const login = useAuthStore((s) => s.login);
@@ -20,8 +21,11 @@ export function LoginPage(): JSX.Element {
   const [mfaCode, setMfaCode] = useState('');
 
   const finishLogin = (): void => {
-    const redirect = (location.state as { from?: string } | null)?.from ?? '/mail';
-    navigate(redirect, { replace: true });
+    // Route by role — platform admin → /admin, organisation admin → /dashboard,
+    // mailbox user → /mail. Honours `state.from` only if the user is allowed there.
+    const { user, tenants } = useAuthStore.getState();
+    const requested = (location.state as { from?: string } | null)?.from ?? null;
+    navigate(postLoginDestination(user, tenants, requested), { replace: true });
   };
 
   const handle = async (e: FormEvent): Promise<void> => {
@@ -97,12 +101,23 @@ export function LoginPage(): JSX.Element {
       title="Welcome back"
       subtitle="Sign in to your Cloud Mail workspace."
       footer={
-        <>
-          Don't have an account?{' '}
-          <Link to="/signup" className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
-            Create one
-          </Link>
-        </>
+        <div className="space-y-3">
+          <div>
+            Don't have an account?{' '}
+            <Link to="/signup" className="font-semibold text-brand-700 hover:underline dark:text-brand-300">
+              Create one
+            </Link>
+          </div>
+          <div className="text-[12px] text-ink-faint dark:text-dark-faint pt-3 border-t border-surface-divider dark:border-dark-divider">
+            Platform administrator?{' '}
+            <Link
+              to="/admin/login"
+              className="font-medium text-ink-muted hover:text-brand-700 dark:text-dark-muted dark:hover:text-brand-300"
+            >
+              Platform Admin Login
+            </Link>
+          </div>
+        </div>
       }
     >
       <form onSubmit={handle} className="space-y-4" noValidate>

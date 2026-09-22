@@ -22,16 +22,20 @@ import { cn } from '@/lib/utils';
 /**
  * Persistent shell around every customer dashboard page. Nav on the left,
  * account switcher + sign out in the top-right.
+ *
+ * `adminOnly` items are only shown to owner/admin members — they're gated
+ * server-side by requireTenant(req, 'admin'), so a mailbox user showing
+ * them here would just see 403s. Not deceptive, just noisy — hide them.
  */
-const NAV = [
-  { to: '/dashboard/domains', label: 'Domains', icon: Globe2 },
-  { to: '/dashboard/mailboxes', label: 'Mailboxes', icon: MailPlus },
+const NAV: Array<{ to: string; label: string; icon: typeof Globe2; adminOnly?: boolean }> = [
+  { to: '/dashboard/domains', label: 'Domains', icon: Globe2, adminOnly: true },
+  { to: '/dashboard/mailboxes', label: 'Mailboxes', icon: MailPlus, adminOnly: true },
   { to: '/dashboard/contacts', label: 'Contacts', icon: Contact2 },
   { to: '/dashboard/calendar', label: 'Calendar', icon: CalendarIcon },
   { to: '/dashboard/signatures', label: 'Signatures', icon: PenLine },
   { to: '/dashboard/rules', label: 'Rules', icon: FilterIcon },
-  { to: '/dashboard/migrations', label: 'Migrations', icon: ArrowLeftRight },
-  { to: '/dashboard/exports', label: 'Exports', icon: Download },
+  { to: '/dashboard/migrations', label: 'Migrations', icon: ArrowLeftRight, adminOnly: true },
+  { to: '/dashboard/exports', label: 'Exports', icon: Download, adminOnly: true },
   { to: '/dashboard/security', label: 'Security', icon: ShieldCheck },
 ];
 
@@ -40,6 +44,10 @@ export function DashboardShell(): JSX.Element {
   const activeTenant = useAuthStore((s) => s.activeTenant);
   const logout = useAuthStore((s) => s.logout);
   const navigate = useNavigate();
+
+  const isOrgAdmin = activeTenant?.role === 'owner' || activeTenant?.role === 'admin';
+  const visibleNav = NAV.filter((n) => !n.adminOnly || isOrgAdmin);
+  const roleLabel = isOrgAdmin ? 'Organisation admin' : 'Mailbox user';
 
   const handleLogout = async (): Promise<void> => {
     await logout();
@@ -53,7 +61,7 @@ export function DashboardShell(): JSX.Element {
         <aside className="hidden lg:flex flex-col border-r border-surface-border dark:border-dark-border bg-white dark:bg-dark-panel">
           <div className="p-5"><Logo /></div>
           <nav className="px-3 space-y-0.5">
-            {NAV.map((n) => (
+            {visibleNav.map((n) => (
               <NavLink
                 key={n.to}
                 to={n.to}
@@ -87,11 +95,9 @@ export function DashboardShell(): JSX.Element {
             <div className="lg:hidden"><LogoMark size={28} /></div>
             <div className="text-[12.5px] font-semibold text-ink-muted dark:text-dark-muted">
               {activeTenant?.name ?? 'Cloud Mail'}
-              {activeTenant && (
-                <span className="ml-2 rounded-full bg-surface-hover dark:bg-dark-hover px-2 py-0.5 text-[10.5px] uppercase tracking-wider">
-                  {activeTenant.role}
-                </span>
-              )}
+              <span className="ml-2 rounded-full bg-surface-hover dark:bg-dark-hover px-2 py-0.5 text-[10.5px] uppercase tracking-wider">
+                {roleLabel}
+              </span>
             </div>
             <div className="ml-auto flex items-center gap-3">
               <div className="hidden md:flex items-center gap-2">
@@ -112,8 +118,8 @@ export function DashboardShell(): JSX.Element {
           </header>
           {/* Mobile bottom nav */}
           <nav className="lg:hidden order-last fixed bottom-0 inset-x-0 z-30 border-t border-surface-border dark:border-dark-border bg-white/95 dark:bg-dark-panel/95 backdrop-blur">
-            <div className="grid grid-cols-9 h-14">
-              {NAV.map((n) => (
+            <div className="grid h-14" style={{ gridTemplateColumns: `repeat(${visibleNav.length}, minmax(0, 1fr))` }}>
+              {visibleNav.map((n) => (
                 <NavLink
                   key={n.to}
                   to={n.to}

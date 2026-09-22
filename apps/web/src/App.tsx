@@ -2,6 +2,7 @@ import { Suspense, useEffect } from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { LandingPage } from '@/pages/LandingPage';
 import { LoginPage } from '@/pages/auth/LoginPage';
+import { AdminLoginPage } from '@/pages/auth/AdminLoginPage';
 import { SignupPage } from '@/pages/auth/SignupPage';
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage';
@@ -30,6 +31,7 @@ import { AdminSystemPage } from '@/pages/admin/AdminSystemPage';
 import { AdminSecurityPage } from '@/pages/admin/AdminSecurityPage';
 import { OnboardingDomainPage } from '@/pages/onboarding/OnboardingDomainPage';
 import { useAuthStore } from '@/store/useAuthStore';
+import { detectRole, homeForRole } from '@/lib/roleRouting';
 
 export default function App(): JSX.Element {
   const bootstrap = useAuthStore((s) => s.bootstrap);
@@ -48,6 +50,7 @@ export default function App(): JSX.Element {
           {/* Public */}
           <Route path="/" element={<LandingPage />} />
           <Route path="/login" element={<PublicOnly><LoginPage /></PublicOnly>} />
+          <Route path="/admin/login" element={<PublicOnly><AdminLoginPage /></PublicOnly>} />
           <Route path="/signup" element={<PublicOnly><SignupPage /></PublicOnly>} />
           <Route path="/forgot" element={<PublicOnly><ForgotPasswordPage /></PublicOnly>} />
           <Route path="/reset" element={<PublicOnly><ResetPasswordPage /></PublicOnly>} />
@@ -111,7 +114,10 @@ function RequireAuth(): JSX.Element {
 
 function PublicOnly({ children }: { children: JSX.Element }): JSX.Element {
   const user = useAuthStore((s) => s.user);
-  if (user) return <Navigate to="/mail" replace />;
+  const tenants = useAuthStore((s) => s.tenants);
+  // Already-authenticated users bouncing off /login, /signup, /admin/login etc.
+  // land on their role-appropriate workspace, not always /mail.
+  if (user) return <Navigate to={homeForRole(detectRole(user, tenants))} replace />;
   return children;
 }
 
