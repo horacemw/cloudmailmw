@@ -1,0 +1,30 @@
+# Postfix Postgres map: which SASL login names are authorised to submit
+# mail with a given envelope-from address? Consumed by
+# reject_sender_login_mismatch to prevent cross-tenant / cross-mailbox
+# sender spoofing from authenticated MailCloud users.
+#
+# For a MAIL FROM of %s we return zero or more SASL usernames (each row is
+# one authorised login). A SASL client whose username does NOT appear in
+# that list is rejected. Non-SASL clients (e.g. loopback systemMail via
+# permit_mynetworks) are unaffected — this map only runs after Postfix
+# has decided SASL authentication is relevant.
+#
+# Rules:
+#   1) A mailbox address may be used by that mailbox itself. Straight lookup.
+#   2) A single-destination alias resolves to its destination mailbox's
+#      address (aliases.destinationMailboxId -> mailboxes.id -> address).
+#      This handles the common "sales@example.com is an alias for
+#      alice@example.com" pattern.
+#   3) Aliases with external-only destinations (no destinationMailboxId)
+#      return nothing here — deliberately: those are forward-only rules
+#      with no local owner, so no SASL user may submit as them.
+#
+# Multi-local-mailbox aliases (aliases.destinationRaw with several local
+# addresses) currently only authorise the row's primary destinationMailboxId.
+# A follow-up may expand to authorise every local destination.
+
+user     = cloudmail_postfix
+password = REPLACED_BY_DEPLOY
+hosts    = 127.0.0.1
+dbname   = cloudmail
+query    = SELECT m.address FROM mailboxes m WHERE m.address = '%s' AND m.status = 'active' UNION SELECT m2.address FROM aliases a JOIN mailboxes m2 ON m2.id = a."destinationMailboxId" WHERE a.source = '%s' AND a.active = true AND m2.status = 'active'

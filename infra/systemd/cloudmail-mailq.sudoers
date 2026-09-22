@@ -1,0 +1,25 @@
+# ─── Cloud Mail — sudoers for platform-admin mail-queue actions ────
+# Installed by 20-install-cloudmail.sh at /etc/sudoers.d/cloudmail-mailq
+# (owner root:root, mode 0440 — validated by visudo).
+#
+# The Cloud Mail API runs as the `cloudmail` system user and shells out to
+# these Postfix admin utilities only when a platform admin triggers a queue
+# action (retry / hold / release / delete / flush) via /v1/admin/queue/*.
+#
+# Locked down to specific binaries and specific arg patterns:
+#   - postqueue -i <QID>       retry a single queued message immediately
+#   - postqueue -f             flush the whole queue
+#   - postsuper -d <QID>       delete a queued message
+#   - postsuper -h <QID>       put a message on hold
+#   - postsuper -H <QID>       release a held message
+#
+# The wildcard * on the tail matches Postfix's hex queue IDs. The API
+# validates queue IDs with /^[A-F0-9]{6,15}$/ before invocation, so even a
+# hypothetical shell-metacharacter injection can't slip through — this
+# sudoers is defence-in-depth, not the primary gate.
+
+cloudmail ALL=(root) NOPASSWD: /usr/sbin/postqueue -i *
+cloudmail ALL=(root) NOPASSWD: /usr/sbin/postqueue -f
+cloudmail ALL=(root) NOPASSWD: /usr/sbin/postsuper -d *
+cloudmail ALL=(root) NOPASSWD: /usr/sbin/postsuper -h *
+cloudmail ALL=(root) NOPASSWD: /usr/sbin/postsuper -H *

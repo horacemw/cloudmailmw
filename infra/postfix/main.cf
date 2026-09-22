@@ -31,9 +31,17 @@ smtpd_recipient_restrictions =
     reject_unknown_recipient_domain
 smtpd_sender_restrictions =
     permit_mynetworks,
+    reject_sender_login_mismatch,
     permit_sasl_authenticated,
     reject_non_fqdn_sender,
     reject_unknown_sender_domain
+# Postgres-backed map: envelope-from → authorised SASL usernames. Combined with
+# reject_sender_login_mismatch above, this closes the cross-tenant / cross-
+# mailbox sender-spoofing gap where any authenticated user could previously
+# submit with an arbitrary From address (which Rspamd's use_domain=header +
+# allow_username_mismatch=true would then sign with the victim's DKIM key if
+# a key existed on disk).
+smtpd_sender_login_maps      = pgsql:/etc/postfix/pgsql/sender-login-maps.cf
 smtpd_helo_required = yes
 smtpd_helo_restrictions =
     permit_mynetworks,

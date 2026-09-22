@@ -108,13 +108,20 @@ umask 022
 
 log "Rendering Postfix Postgres map files with real password"
 install -d -m 0755 /etc/postfix/pgsql
-for f in virtual-domains virtual-mailboxes virtual-aliases; do
+for f in virtual-domains virtual-mailboxes virtual-aliases sender-login-maps; do
   sed "s/REPLACED_BY_DEPLOY/${DB_POSTFIX_PASSWORD}/g" \
     /opt/cloudmail/current/infra/postfix/pgsql/${f}.cf \
     > /etc/postfix/pgsql/${f}.cf
   chmod 0640 /etc/postfix/pgsql/${f}.cf
   chown root:postfix /etc/postfix/pgsql/${f}.cf
 done
+
+log "Installing sudoers for cloudmail-user Postfix queue actions"
+install -m 0440 -o root -g root \
+  /opt/cloudmail/current/infra/systemd/cloudmail-mailq.sudoers \
+  /etc/sudoers.d/cloudmail-mailq
+# visudo -c validates every /etc/sudoers.d file — abort if malformed.
+visudo -c -q -f /etc/sudoers.d/cloudmail-mailq || die "cloudmail-mailq sudoers failed validation"
 
 log "Installing Postfix main.cf + master.cf entries"
 cp /opt/cloudmail/current/infra/postfix/main.cf /etc/postfix/main.cf

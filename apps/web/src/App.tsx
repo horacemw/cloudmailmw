@@ -27,6 +27,7 @@ import { AdminQueuePage } from '@/pages/admin/AdminQueuePage';
 import { AdminAuditPage } from '@/pages/admin/AdminAuditPage';
 import { AdminRelayPage } from '@/pages/admin/AdminRelayPage';
 import { AdminSystemPage } from '@/pages/admin/AdminSystemPage';
+import { AdminSecurityPage } from '@/pages/admin/AdminSecurityPage';
 import { OnboardingDomainPage } from '@/pages/onboarding/OnboardingDomainPage';
 import { useAuthStore } from '@/store/useAuthStore';
 
@@ -83,6 +84,7 @@ export default function App(): JSX.Element {
               <Route path="/admin/mailboxes" element={<AdminMailboxesPage />} />
               <Route path="/admin/queue" element={<AdminQueuePage />} />
               <Route path="/admin/system" element={<AdminSystemPage />} />
+              <Route path="/admin/security" element={<AdminSecurityPage />} />
               <Route path="/admin/audit" element={<AdminAuditPage />} />
               <Route path="/admin/relay" element={<AdminRelayPage />} />
             </Route>

@@ -31,4 +31,6 @@ export const errors = {
     new AppError(429, code, message),
   internal: (code = 'internal_error', message = 'Something went wrong') =>
     new AppError(500, code, message),
+  serviceUnavailable: (code = 'unavailable', message = 'The service is unavailable') =>
+    new AppError(503, code, message),
 };

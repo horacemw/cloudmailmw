@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { Navigate, NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Activity, Building2, Mail, ScrollText, Server, Shield, Users } from 'lucide-react';
+import { ArrowLeft, Activity, Building2, Lock, Mail, ScrollText, Server, Shield, Users } from 'lucide-react';
 import { Logo } from '@/components/ui/Logo';
 import { useAuthStore } from '@/store/useAuthStore';
 import { useUIStore } from '@/store/useUIStore';
@@ -12,6 +12,7 @@ const NAV = [
   { to: '/admin/mailboxes', label: 'Mailboxes', icon: Mail },
   { to: '/admin/queue', label: 'Mail queue', icon: Server },
   { to: '/admin/system', label: 'System', icon: Activity },
+  { to: '/admin/security', label: 'Security', icon: Lock },
   { to: '/admin/audit', label: 'Audit log', icon: ScrollText },
   { to: '/admin/relay', label: 'Mail relay', icon: Users },
 ];

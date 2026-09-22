@@ -54,6 +54,7 @@ function MfaCard(): JSX.Element {
   const { data, refetch } = useResource<MfaState>('/v1/auth/mfa');
   const [openSetup, setOpenSetup] = useState(false);
   const [openDisable, setOpenDisable] = useState(false);
+  const [openRegen, setOpenRegen] = useState(false);
 
   return (
     <div className="rounded-2xl border border-surface-border bg-white p-5 dark:bg-dark-card dark:border-dark-border">
@@ -69,12 +70,20 @@ function MfaCard(): JSX.Element {
           </p>
         </div>
         {data?.enabled ? (
-          <button
-            onClick={() => setOpenDisable(true)}
-            className="h-9 rounded-lg border border-state-danger/40 text-state-danger px-3 text-[13px] font-semibold hover:bg-state-danger-soft"
-          >
-            Disable 2FA
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setOpenRegen(true)}
+              className="h-9 rounded-lg border border-surface-border px-3 text-[13px] font-semibold hover:bg-surface-hover dark:border-dark-border dark:hover:bg-dark-hover"
+            >
+              Regenerate recovery codes
+            </button>
+            <button
+              onClick={() => setOpenDisable(true)}
+              className="h-9 rounded-lg border border-state-danger/40 text-state-danger px-3 text-[13px] font-semibold hover:bg-state-danger-soft"
+            >
+              Disable 2FA
+            </button>
+          </div>
         ) : (
           <button
             onClick={() => setOpenSetup(true)}
@@ -92,7 +101,86 @@ function MfaCard(): JSX.Element {
       )}
       {openSetup && <MfaSetupModal onClose={() => { setOpenSetup(false); void refetch(); }} />}
       {openDisable && <MfaDisableModal onClose={() => { setOpenDisable(false); void refetch(); }} />}
+      {openRegen && <MfaRegenModal onClose={() => { setOpenRegen(false); void refetch(); }} />}
     </div>
+  );
+}
+
+function MfaRegenModal({ onClose }: { onClose: () => void }): JSX.Element {
+  const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const { copy, copied } = useClipboard();
+
+  const submit = async (e: FormEvent): Promise<void> => {
+    e.preventDefault();
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ recoveryCodes: string[] }>('/v1/auth/mfa/recovery-codes/regenerate', {
+        method: 'POST',
+        body: JSON.stringify({ password, code }),
+      });
+      setCodes(r.recoveryCodes);
+    } catch (er) {
+      setErr(er instanceof ApiError ? er.message : 'Regeneration failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Regenerate recovery codes"
+      description={codes ? 'Save your new recovery codes now.' : 'Confirm with your password and a current authenticator code. Previous recovery codes will stop working immediately.'}
+    >
+      {err && (
+        <div className="mb-3 flex items-start gap-2 rounded-lg border border-state-danger/30 bg-state-danger-soft px-3 py-2 text-[13px] text-state-danger">
+          <AlertCircle size={14} className="mt-0.5" /> {err}
+        </div>
+      )}
+      {!codes && (
+        <form onSubmit={submit} className="space-y-3">
+          <label>
+            <span className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted dark:text-dark-muted">Password</span>
+            <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full h-10 rounded-lg border border-surface-border bg-white px-3 text-[14px] outline-none focus:border-brand dark:bg-dark-card dark:border-dark-border dark:text-dark-text" />
+          </label>
+          <label>
+            <span className="mb-1 block text-[11.5px] font-semibold uppercase tracking-wide text-ink-muted dark:text-dark-muted">Authenticator code</span>
+            <input inputMode="numeric" pattern="[0-9]{6}" maxLength={6} required value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ''))} className="w-full h-10 rounded-lg border border-surface-border bg-white px-3 text-[15px] font-mono tracking-widest outline-none focus:border-brand dark:bg-dark-card dark:border-dark-border dark:text-dark-text" placeholder="123456" />
+          </label>
+          <div className="flex items-center justify-end gap-2">
+            <button type="button" onClick={onClose} className="h-9 px-4 rounded-lg border border-surface-border text-[13px] hover:bg-surface-hover dark:border-dark-border">Cancel</button>
+            <button type="submit" disabled={busy} className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-brand text-white text-[13px] font-semibold hover:bg-brand-600 disabled:opacity-60">
+              {busy && <Loader2 className="animate-spin" size={13} />} Regenerate
+            </button>
+          </div>
+        </form>
+      )}
+      {codes && (
+        <div>
+          <div className="grid grid-cols-2 gap-2">
+            {codes.map((c, i) => (
+              <div key={i} className="flex items-center justify-between rounded-md border border-surface-border bg-white px-3 py-2 font-mono text-[13px] dark:bg-dark-card dark:border-dark-border">
+                <span>{c}</span>
+                <button onClick={() => copy(c, c)} className="opacity-60 hover:opacity-100"><Copy size={12} /></button>
+                {copied === c && <span className="text-[10.5px] text-brand-700">copied</span>}
+              </div>
+            ))}
+          </div>
+          <div className="mt-4 flex items-center justify-between">
+            <button onClick={() => copy(codes.join('\n'), 'all')} className="h-9 px-3 rounded-lg border border-surface-border text-[13px] hover:bg-surface-hover dark:border-dark-border">
+              {copied === 'all' ? 'Copied all' : 'Copy all codes'}
+            </button>
+            <button onClick={onClose} className="h-9 px-4 rounded-lg bg-brand text-white text-[13px] font-semibold hover:bg-brand-600">I've saved them</button>
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 

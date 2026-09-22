@@ -244,6 +244,108 @@ const routes: FastifyPluginAsync = async (fastify) => {
     },
   });
 
+  /* ─── Queue actions ─────────────────────────────────────────
+   *  Backed by `sudo -n postsuper/postqueue` — the API user is `cloudmail`
+   *  which cannot run these directly. The deploy installs a strict sudoers
+   *  file (/etc/sudoers.d/cloudmail-mailq) that whitelists ONLY these three
+   *  binaries with no wildcard arguments beyond a validated queue-id.
+   *
+   *  Queue IDs are validated with a strict regex before ever reaching the
+   *  shell — Postfix queue IDs are hex characters, typically 9-15 long.
+   *  Anything that doesn't match returns 400 without shelling out.
+   */
+  const qidSchema = z.object({ qid: z.string().regex(/^[A-F0-9]{6,15}$/, 'invalid queue id') });
+
+  async function runQueueAction(
+    req: FastifyRequest,
+    qid: string,
+    action: 'retry' | 'delete' | 'hold' | 'release',
+  ): Promise<{ ok: true; action: string; qid: string; output: string }> {
+    const argMap: Record<typeof action, [string, string[]]> = {
+      retry:   ['/usr/sbin/postqueue', ['-i', qid]],
+      delete:  ['/usr/sbin/postsuper', ['-d', qid]],
+      hold:    ['/usr/sbin/postsuper', ['-h', qid]],
+      release: ['/usr/sbin/postsuper', ['-H', qid]],
+    };
+    const [bin, args] = argMap[action];
+    let output = '';
+    try {
+      output = await runCommand('sudo', ['-n', bin, ...args]);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw errors.serviceUnavailable('queue_tool_unavailable', `Could not run ${action} on ${qid}: ${msg}`);
+    }
+    await prisma.auditEvent.create({
+      data: {
+        // Queue actions aren't scoped to a tenant — record against a synthetic
+        // "platform" tenant marker in the metadata. Use the actor's first
+        // tenant membership for the FK.
+        tenantId: (await prisma.tenantMember.findFirst({ where: { userId: req.currentUser!.id } }))?.tenantId ?? '',
+        actorUserId: req.currentUser!.id,
+        action: `platform.mailq.${action}`,
+        targetType: 'mailq',
+        targetId: qid,
+        ipAddress: req.ip,
+        metadata: { output: output.slice(0, 500) },
+      },
+    });
+    return { ok: true, action, qid, output: output.slice(0, 2_000) };
+  }
+
+  fastify.post('/queue/:qid/retry', {
+    preHandler: [fastify.requireAuth, requirePlatformAdmin],
+    handler: async (req) => {
+      const { qid } = qidSchema.parse(req.params);
+      return runQueueAction(req, qid, 'retry');
+    },
+  });
+
+  fastify.post('/queue/:qid/delete', {
+    preHandler: [fastify.requireAuth, requirePlatformAdmin],
+    handler: async (req) => {
+      const { qid } = qidSchema.parse(req.params);
+      return runQueueAction(req, qid, 'delete');
+    },
+  });
+
+  fastify.post('/queue/:qid/hold', {
+    preHandler: [fastify.requireAuth, requirePlatformAdmin],
+    handler: async (req) => {
+      const { qid } = qidSchema.parse(req.params);
+      return runQueueAction(req, qid, 'hold');
+    },
+  });
+
+  fastify.post('/queue/:qid/release', {
+    preHandler: [fastify.requireAuth, requirePlatformAdmin],
+    handler: async (req) => {
+      const { qid } = qidSchema.parse(req.params);
+      return runQueueAction(req, qid, 'release');
+    },
+  });
+
+  fastify.post('/queue/flush', {
+    preHandler: [fastify.requireAuth, requirePlatformAdmin],
+    handler: async (req) => {
+      let output = '';
+      try {
+        output = await runCommand('sudo', ['-n', '/usr/sbin/postqueue', '-f']);
+      } catch (err) {
+        throw errors.serviceUnavailable('queue_tool_unavailable', err instanceof Error ? err.message : String(err));
+      }
+      await prisma.auditEvent.create({
+        data: {
+          tenantId: (await prisma.tenantMember.findFirst({ where: { userId: req.currentUser!.id } }))?.tenantId ?? '',
+          actorUserId: req.currentUser!.id,
+          action: 'platform.mailq.flush',
+          targetType: 'mailq',
+          ipAddress: req.ip,
+        },
+      });
+      return { ok: true, action: 'flush', output: output.slice(0, 2_000) };
+    },
+  });
+
   /* ─── Audit log ────────────────────────────────────────────── */
   fastify.get('/audit', {
     preHandler: [fastify.requireAuth, requirePlatformAdmin],
@@ -264,6 +366,63 @@ const routes: FastifyPluginAsync = async (fastify) => {
         take: q.limit,
       });
       return { events: rows };
+    },
+  });
+
+  /* ─── Security overview: real events, no fabrication ────── */
+  fastify.get('/security', {
+    preHandler: [fastify.requireAuth, requirePlatformAdmin],
+    handler: async (req) => {
+      const q = z
+        .object({
+          limit: z.coerce.number().int().min(1).max(500).default(50),
+          hours: z.coerce.number().int().min(1).max(720).default(24),
+        })
+        .parse(req.query);
+
+      const now = Date.now();
+      const since24h = new Date(now - 24 * 60 * 60 * 1000);
+      const since7d = new Date(now - 7 * 24 * 60 * 60 * 1000);
+      const sinceRange = new Date(now - q.hours * 60 * 60 * 1000);
+
+      // Actions we consider security-relevant for the aggregated feed.
+      const SECURITY_ACTIONS = [
+        'mfa.enabled', 'mfa.disabled',
+        'tenant.suspended.by_platform_admin', 'tenant.restored.by_platform_admin',
+        'user.platform_admin_granted', 'user.platform_admin_revoked',
+        'user.password_reset',
+      ];
+
+      const [failed24h, failed7d, success24h, success7d, recentFailed, recentSecurity] = await Promise.all([
+        prisma.loginAttempt.count({ where: { success: false, createdAt: { gte: since24h } } }),
+        prisma.loginAttempt.count({ where: { success: false, createdAt: { gte: since7d } } }),
+        prisma.loginAttempt.count({ where: { success: true, createdAt: { gte: since24h } } }),
+        prisma.loginAttempt.count({ where: { success: true, createdAt: { gte: since7d } } }),
+        prisma.loginAttempt.findMany({
+          where: { success: false, createdAt: { gte: sinceRange } },
+          orderBy: { createdAt: 'desc' },
+          take: q.limit,
+          select: { id: true, email: true, ipAddress: true, reason: true, createdAt: true, userId: true },
+        }),
+        prisma.auditEvent.findMany({
+          where: { action: { in: SECURITY_ACTIONS }, createdAt: { gte: sinceRange } },
+          orderBy: { createdAt: 'desc' },
+          take: q.limit,
+          select: { id: true, action: true, tenantId: true, actorUserId: true, targetType: true, targetId: true, ipAddress: true, createdAt: true, metadata: true },
+        }),
+      ]);
+
+      return {
+        window: { hours: q.hours, since: sinceRange.toISOString() },
+        counts: {
+          failedLogins24h: failed24h,
+          failedLogins7d: failed7d,
+          successfulLogins24h: success24h,
+          successfulLogins7d: success7d,
+        },
+        recentFailedLogins: recentFailed,
+        recentSecurityEvents: recentSecurity,
+      };
     },
   });
 
