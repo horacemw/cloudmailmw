@@ -8,6 +8,7 @@ import {
   Forward,
   Mail,
   MoreHorizontal,
+  Pencil,
   Printer,
   Reply,
   ReplyAll,
@@ -167,6 +168,7 @@ export function ReadingPane(): JSX.Element {
             onBack={() => setPaneOpen(false)}
             liveUid={liveUid}
             liveFolder={liveFolder}
+            liveDetail={liveDetail}
           />
           <div className="flex-1 overflow-y-auto scroll-thin">
             <EmailHeader email={email} />
@@ -199,17 +201,43 @@ function ReadingToolbar({
   onBack,
   liveUid,
   liveFolder,
+  liveDetail,
 }: {
   email: Email;
   onBack: () => void;
   liveUid: number | null;
   liveFolder: string;
+  liveDetail: LiveMessageDetail | null;
 }): JSX.Element {
   const isLive = liveUid != null;
   const setFlags = useLiveMailStore((s) => s.setFlags);
   const moveMessage = useLiveMailStore((s) => s.moveMessage);
   const folderPathFor = useLiveMailStore((s) => s.folderPathFor);
   const liveFolders = useLiveMailStore((s) => s.folders);
+  const openCompose = useUIStore((s) => s.openCompose);
+
+  // Is the current live message a draft? Two signals to trust:
+  //  1) the folder we're viewing is flagged \Drafts
+  //  2) the message flags include \Draft
+  const draftsPath = useLiveMailStore((s) => s.folderPathFor('drafts'));
+  const isDraft =
+    isLive &&
+    (liveFolder === draftsPath || (liveDetail?.flags?.includes('\\Draft') ?? false));
+
+  const continueDraft = (): void => {
+    if (!isLive || !liveDetail) return;
+    const to = (liveDetail.headers.to ?? []).map((t) => t.address).filter(Boolean).join(', ');
+    const cc = (liveDetail.headers.cc ?? []).map((t) => t.address).filter(Boolean).join(', ');
+    const bodyText = liveDetail.text ?? htmlToPlainText(liveDetail.html ?? '');
+    openCompose({
+      to,
+      cc,
+      subject: liveDetail.headers.subject ?? '',
+      body: bodyText,
+      showCcBcc: Boolean(cc),
+      liveDraftReplaceUid: liveUid,
+    });
+  };
 
   // Mock actions (still used in demo mode against the empty store).
   const mockToggleStar = useMailStore((s) => s.toggleStar);
@@ -310,6 +338,18 @@ function ReadingToolbar({
           className="lg:hidden"
         />
       </Tooltip>
+      {isDraft && (
+        <>
+          <button
+            onClick={continueDraft}
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-lg bg-brand text-white text-[13px] font-semibold hover:bg-brand-600"
+          >
+            <Pencil size={14} />
+            Continue editing
+          </button>
+          <div className="mx-1 h-5 w-px bg-surface-divider dark:bg-dark-divider" />
+        </>
+      )}
       <Tooltip label="Archive (E)">
         <IconButton icon={<Archive size={16} />} label="Archive" onClick={() => void doMoveTo('archive', 'Archived')} />
       </Tooltip>
@@ -416,6 +456,15 @@ function ReadingToolbar({
 }
 
 /* ─── helpers ──────────────────────────────────────────────────── */
+
+function htmlToPlainText(html: string): string {
+  if (!html) return '';
+  // Server has already sanitized this, but browsers vary on innerText.
+  // Do a very conservative textContent extraction for the draft body.
+  const div = document.createElement('div');
+  div.innerHTML = html;
+  return (div.textContent ?? '').replace(/ /g, ' ').trim();
+}
 
 function humanSize(bytes: number): string {
   if (!bytes) return '0 B';

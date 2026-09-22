@@ -1,28 +1,18 @@
 import type { ReactNode } from 'react';
-import {
-  Calendar,
-  Cloud,
-  Contact2,
-  FileText,
-  ListChecks,
-  Mail,
-  MessageSquare,
-  Notebook,
-  Video,
-} from 'lucide-react';
+import { Calendar, Contact2, Mail } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Dropdown } from '@/components/ui/Dropdown';
-import { useUIStore } from '@/store/useUIStore';
 
+/**
+ * App switcher — only lists apps that are actually built and reachable.
+ * Placeholder entries (Drive/Docs/Notes/Tasks/Chat/Meet) were removed so
+ * a user isn't served a "coming soon" toast from a control that pretends
+ * to work.
+ */
 const APPS = [
-  { name: 'Mail', icon: <Mail size={20} />, active: true },
-  { name: 'Calendar', icon: <Calendar size={20} /> },
-  { name: 'Contacts', icon: <Contact2 size={20} /> },
-  { name: 'Drive', icon: <Cloud size={20} /> },
-  { name: 'Docs', icon: <FileText size={20} /> },
-  { name: 'Notes', icon: <Notebook size={20} /> },
-  { name: 'Tasks', icon: <ListChecks size={20} /> },
-  { name: 'Chat', icon: <MessageSquare size={20} /> },
-  { name: 'Meet', icon: <Video size={20} /> },
+  { name: 'Mail', icon: <Mail size={20} />, to: '/mail' },
+  { name: 'Calendar', icon: <Calendar size={20} />, to: '/dashboard/calendar' },
+  { name: 'Contacts', icon: <Contact2 size={20} />, to: '/dashboard/contacts' },
 ];
 
 interface Props {
@@ -30,7 +20,7 @@ interface Props {
 }
 
 export function AppLauncher({ trigger }: Props): JSX.Element {
-  const pushToast = useUIStore((s) => s.pushToast);
+  const navigate = useNavigate();
   return (
     <Dropdown width="w-[320px]" trigger={trigger}>
       {({ close }) => (
@@ -43,20 +33,10 @@ export function AppLauncher({ trigger }: Props): JSX.Element {
               <button
                 key={app.name}
                 onClick={() => {
-                  if (!app.active) {
-                    pushToast({
-                      title: `${app.name} coming soon`,
-                      description: 'Available in a later phase.',
-                    });
-                  }
+                  navigate(app.to);
                   close();
                 }}
-                className={
-                  'flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl transition-colors ' +
-                  (app.active
-                    ? 'bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300'
-                    : 'hover:bg-surface-hover dark:hover:bg-dark-hover text-ink-muted dark:text-dark-muted')
-                }
+                className="flex flex-col items-center justify-center gap-1.5 p-3 rounded-xl transition-colors bg-brand-100 text-brand-700 dark:bg-brand-900/40 dark:text-brand-300 hover:bg-brand-200/60 dark:hover:bg-brand-900/60"
               >
                 {app.icon}
                 <span className="text-[11.5px] font-medium">{app.name}</span>

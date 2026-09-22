@@ -40,6 +40,9 @@ interface State {
   activeFolder: string;
   messages: LiveMessageSummary[];
   loadingMessages: boolean;
+  loadingOlder: boolean;
+  /** Cursor for the "older than" pagination the API returns; null = end of folder. */
+  nextBefore: number | null;
   error: string | null;
 
   /** Server-side search. Empty string = no filter. */
@@ -49,6 +52,8 @@ interface State {
   selectFolder: (path: string) => Promise<void>;
   refreshFolders: () => Promise<void>;
   refreshMessages: () => Promise<void>;
+  /** Append the next page of older messages using the current cursor. */
+  loadOlder: () => Promise<void>;
 
   setSearch: (q: string) => Promise<void>;
 
@@ -113,6 +118,8 @@ export const useLiveMailStore = create<State>((set, get) => ({
   activeFolder: 'INBOX',
   messages: [],
   loadingMessages: false,
+  loadingOlder: false,
+  nextBefore: null,
   error: null,
   searchQuery: '',
 
@@ -166,18 +173,48 @@ export const useLiveMailStore = create<State>((set, get) => ({
   refreshMessages: async () => {
     const folder = get().activeFolder;
     const search = get().searchQuery.trim();
-    set({ loadingMessages: true, error: null });
+    set({ loadingMessages: true, error: null, nextBefore: null });
     try {
       const qs = new URLSearchParams({ folder, limit: '50' });
       if (search) qs.set('search', search);
       const resp = await api<{ messages: LiveMessageSummary[]; nextBefore: number | null }>(
         `/v1/mail/messages?${qs.toString()}`,
       );
-      set({ messages: resp.messages, loadingMessages: false });
+      set({ messages: resp.messages, nextBefore: resp.nextBefore, loadingMessages: false });
     } catch (err) {
       set({
         loadingMessages: false,
         error: err instanceof ApiError ? err.message : 'Could not load messages',
+      });
+    }
+  },
+
+  loadOlder: async () => {
+    const folder = get().activeFolder;
+    const cursor = get().nextBefore;
+    if (cursor == null || get().loadingOlder) return;
+    const search = get().searchQuery.trim();
+    set({ loadingOlder: true, error: null });
+    try {
+      const qs = new URLSearchParams({ folder, limit: '50', before: String(cursor) });
+      if (search) qs.set('search', search);
+      const resp = await api<{ messages: LiveMessageSummary[]; nextBefore: number | null }>(
+        `/v1/mail/messages?${qs.toString()}`,
+      );
+      set((s) => {
+        // Dedupe by uid — belt-and-braces even though the backend returns
+        // strictly-older UIDs when `before` is supplied.
+        const seen = new Set(s.messages.map((m) => m.uid));
+        const merged = [...s.messages];
+        for (const m of resp.messages) {
+          if (!seen.has(m.uid)) merged.push(m);
+        }
+        return { messages: merged, nextBefore: resp.nextBefore, loadingOlder: false };
+      });
+    } catch (err) {
+      set({
+        loadingOlder: false,
+        error: err instanceof ApiError ? err.message : 'Could not load older messages',
       });
     }
   },

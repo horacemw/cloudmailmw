@@ -122,6 +122,16 @@ export function ComposeModal(): JSX.Element | null {
             typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `k_${Date.now()}`,
         });
         if (draftIdRef.current) deleteDraft(draftIdRef.current);
+        // If we resumed an IMAP-stored draft, delete the old copy from Drafts
+        // so the user isn't left with both a Sent copy and a stale draft.
+        if (compose.liveDraftReplaceUid != null) {
+          const store = useLiveMailStore.getState();
+          const draftsPath = store.folderPathFor('drafts');
+          const trashPath = store.folderPathFor('trash');
+          store
+            .moveMessage(compose.liveDraftReplaceUid, draftsPath, trashPath)
+            .catch(() => { /* best-effort — send already succeeded */ });
+        }
         push({ title: 'Message sent', tone: 'success' });
         closeCompose();
         return;
@@ -144,7 +154,43 @@ export function ComposeModal(): JSX.Element | null {
     });
   };
 
-  const handleSaveDraft = (): void => {
+  const handleSaveDraft = async (): Promise<void> => {
+    const liveMode = useLiveMailStore.getState().mode;
+    if (liveMode === 'ready') {
+      // Real IMAP draft — round-trip through /v1/mail/drafts so it survives
+      // page reload and appears in the Drafts folder for other clients.
+      try {
+        const htmlBody = activeSignatureHtml
+          ? composeBodyWithHtmlSignature(compose.body, activeSignatureHtml)
+          : bodyToHtml(compose.body, signature);
+        const result = await useLiveMailStore.getState().saveDraft({
+          to: compose.to ? parseContacts(compose.to).map((c) => c.email) : [],
+          cc: compose.cc ? parseContacts(compose.cc).map((c) => c.email) : undefined,
+          bcc: compose.bcc ? parseContacts(compose.bcc).map((c) => c.email) : undefined,
+          subject: compose.subject || '(no subject)',
+          text: compose.body,
+          html: htmlBody,
+          replaceUid: compose.liveDraftReplaceUid ?? undefined,
+        });
+        // Refresh the current folder if we're sitting in Drafts so the new
+        // draft appears (or the replaced one is gone).
+        const store = useLiveMailStore.getState();
+        const draftsPath = store.folderPathFor('drafts');
+        if (store.activeFolder === draftsPath) void store.refreshMessages();
+        push({ title: 'Draft saved', tone: 'success' });
+        void result;
+      } catch (err) {
+        push({
+          title: 'Save failed',
+          description: err instanceof Error ? err.message : 'Could not save the draft',
+          tone: 'danger',
+        });
+        return;
+      }
+      closeCompose();
+      return;
+    }
+    // No live mailbox: fall back to the local mock draft store (memory only).
     const payload = draftPayload(compose, signature);
     if (draftIdRef.current) {
       updateDraft(draftIdRef.current, payload);
@@ -158,7 +204,7 @@ export function ComposeModal(): JSX.Element | null {
         starred: false,
       });
     }
-    push({ title: 'Draft saved', tone: 'success' });
+    push({ title: 'Draft saved (local)', tone: 'success' });
     closeCompose();
   };
 

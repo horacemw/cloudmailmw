@@ -20,6 +20,12 @@ interface ComposeState {
   subject: string;
   body: string;
   showCcBcc: boolean;
+  /**
+   * When resuming an IMAP-stored draft, this is the UID of the message
+   * currently sitting in Drafts. The next saveDraft/send hands it to the
+   * backend as `replaceUid` so the old copy is deleted (no drift, no dupes).
+   */
+  liveDraftReplaceUid: number | null;
 }
 
 const emptyCompose: ComposeState = {
@@ -32,6 +38,7 @@ const emptyCompose: ComposeState = {
   subject: '',
   body: '',
   showCcBcc: false,
+  liveDraftReplaceUid: null,
 };
 
 interface UIState {

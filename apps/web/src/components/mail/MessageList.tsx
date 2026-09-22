@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Inbox, Loader2, ServerOff } from 'lucide-react';
+import { ChevronDown, Inbox, Loader2, ServerOff } from 'lucide-react';
 import { useMailStore } from '@/store/useMailStore';
 import { useLiveMailStore } from '@/store/useLiveMailStore';
 import { useUIStore } from '@/store/useUIStore';
@@ -11,28 +11,30 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import type { Email } from '@/types';
 
 /**
- * Message list that transparently switches between LIVE mail (real IMAP via
- * /v1/mail/*) and the Phase 1 demo/mock store. In LIVE mode, IMAP UIDs are
- * mapped into the same Email shape the row component already knows how to
- * render — no per-row changes required.
+ * Message list. In LIVE mode: reads real IMAP messages from useLiveMailStore
+ * (fetched via /v1/mail/messages, paginated with a UID before-cursor).
+ * In demo mode: reads from the empty mock store — which shows the honest
+ * empty state.
  */
 export function MessageList(): JSX.Element {
   const mode = useLiveMailStore((s) => s.mode);
   const isLive = mode === 'ready';
 
-  // Mock-mode state
   const mockEmails = useMailStore((s) => s.visibleEmails)();
   const activeFolderId = useMailStore((s) => s.activeFolderId);
   const query = useMailStore((s) => s.searchQuery);
+  const filterTab = useMailStore((s) => s.filterTab);
 
-  // Live-mode state
   const liveMessages = useLiveMailStore((s) => s.messages);
   const liveFolder = useLiveMailStore((s) => s.activeFolder);
   const liveLoading = useLiveMailStore((s) => s.loadingMessages);
+  const liveLoadingOlder = useLiveMailStore((s) => s.loadingOlder);
   const liveError = useLiveMailStore((s) => s.error);
+  const liveNextBefore = useLiveMailStore((s) => s.nextBefore);
+  const liveSearchQuery = useLiveMailStore((s) => s.searchQuery);
   const refreshMessages = useLiveMailStore((s) => s.refreshMessages);
+  const loadOlder = useLiveMailStore((s) => s.loadOlder);
 
-  // Selection (shared between modes — same store, just different ID space)
   const selectedIds = useMailStore((s) => s.selectedIds);
   const selectAll = useMailStore((s) => s.selectAllVisible);
   const clearSelection = useMailStore((s) => s.clearSelection);
@@ -40,9 +42,8 @@ export function MessageList(): JSX.Element {
   const setPaneOpen = useUIStore((s) => s.setReadingPaneOpenMobile);
   const setSelectedEmail = useMailStore((s) => s.selectEmail);
 
-  const emails: Email[] = useMemo(() => {
-    if (!isLive) return mockEmails;
-    // Convert LiveMessageSummary → Email so MessageRow stays identical.
+  // Adapt live message summaries into the Email shape MessageRow already knows.
+  const liveAsEmails: Email[] = useMemo(() => {
     return liveMessages.map((m) => ({
       id: `live-${m.uid}`,
       folderId: liveFolder,
@@ -60,7 +61,24 @@ export function MessageList(): JSX.Element {
         ? [{ id: 'placeholder', name: 'attachment', size: '?', type: 'other' }]
         : undefined,
     }));
-  }, [isLive, mockEmails, liveMessages, liveFolder]);
+  }, [liveMessages, liveFolder]);
+
+  // Filter tabs (All / Unread / Starred / Attachments) are client-side over
+  // the current message window — they're user-experience filters, not folder
+  // navigation. Server-side search (see TopBar) is a separate concern.
+  const filtered: Email[] = useMemo(() => {
+    const source = isLive ? liveAsEmails : mockEmails;
+    switch (filterTab) {
+      case 'unread':
+        return source.filter((e) => !e.read);
+      case 'starred':
+        return source.filter((e) => e.starred);
+      case 'attachments':
+        return source.filter((e) => (e.attachments?.length ?? 0) > 0);
+      default:
+        return source;
+    }
+  }, [isLive, liveAsEmails, mockEmails, filterTab]);
 
   const [refreshingFolder, setRefreshingFolder] = useState(false);
   useEffect(() => {
@@ -69,7 +87,6 @@ export function MessageList(): JSX.Element {
     void refreshMessages().finally(() => setRefreshingFolder(false));
   }, [isLive, liveFolder, refreshMessages]);
 
-  // For mock mode, the historical brief skeleton on folder change.
   const [mockLoading, setMockLoading] = useState(false);
   useEffect(() => {
     if (isLive) return;
@@ -79,24 +96,28 @@ export function MessageList(): JSX.Element {
   }, [isLive, activeFolderId]);
 
   const loading = isLive ? liveLoading || refreshingFolder : mockLoading;
-  const allSelected = emails.length > 0 && emails.every((e) => selectedIds.has(e.id));
+  const allSelected = filtered.length > 0 && filtered.every((e) => selectedIds.has(e.id));
   const anySelected = selectedIds.size > 0;
 
-  // Auto-clear selection if it references stale rows after mode switch.
   useEffect(() => {
-    if (anySelected && !emails.some((e) => selectedIds.has(e.id))) {
+    if (anySelected && !filtered.some((e) => selectedIds.has(e.id))) {
       clearSelection();
     }
-  }, [emails, selectedIds, anySelected, clearSelection]);
+  }, [filtered, selectedIds, anySelected, clearSelection]);
 
-  // Sync selected message across modes if the currently-selected row went away.
   useEffect(() => {
-    if (selectedId && !emails.some((e) => e.id === selectedId)) {
-      const firstId = emails[0]?.id ?? null;
+    if (selectedId && !filtered.some((e) => e.id === selectedId)) {
+      const firstId = filtered[0]?.id ?? null;
       setSelectedEmail(firstId);
       if (firstId && !isLive) setPaneOpen(false);
     }
-  }, [selectedId, emails, setSelectedEmail, isLive, setPaneOpen]);
+  }, [selectedId, filtered, setSelectedEmail, isLive, setPaneOpen]);
+
+  // Text for the "search returned nothing" state — prefer the LIVE query
+  // when in live mode (backend-filtered), else the mock query.
+  const activeQuery = isLive ? liveSearchQuery : query;
+
+  const canLoadOlder = isLive && liveNextBefore != null;
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -107,12 +128,12 @@ export function MessageList(): JSX.Element {
           <Checkbox
             checked={allSelected}
             indeterminate={anySelected && !allSelected}
-            onChange={(v) => (v ? selectAll(emails.map((e) => e.id)) : clearSelection())}
+            onChange={(v) => (v ? selectAll(filtered.map((e) => e.id)) : clearSelection())}
             size="sm"
           />
           <span className="text-[12px] text-ink-muted dark:text-dark-muted">
-            {emails.length > 0
-              ? `Select all ${emails.length}`
+            {filtered.length > 0
+              ? `Select all ${filtered.length}`
               : loading
                 ? 'Loading…'
                 : 'No messages'}
@@ -129,7 +150,7 @@ export function MessageList(): JSX.Element {
       )}
 
       <div className="flex-1 overflow-y-auto scroll-thin">
-        {loading && emails.length === 0 ? (
+        {loading && filtered.length === 0 ? (
           <>
             <MessageRowSkeleton />
             <MessageRowSkeleton />
@@ -137,7 +158,7 @@ export function MessageList(): JSX.Element {
             <MessageRowSkeleton />
             <MessageRowSkeleton />
           </>
-        ) : emails.length === 0 ? (
+        ) : filtered.length === 0 ? (
           isLive && liveError ? (
             <EmptyState
               icon={<ServerOff size={22} />}
@@ -147,25 +168,57 @@ export function MessageList(): JSX.Element {
           ) : (
             <EmptyState
               icon={<Inbox size={22} />}
-              title={query ? 'No matches found' : "You're all caught up"}
+              title={activeQuery ? 'No matches found' : "You're all caught up"}
               description={
-                query
-                  ? `We couldn't find any messages matching "${query}".`
-                  : 'Messages you receive will appear here.'
+                activeQuery
+                  ? `We couldn't find any messages matching "${activeQuery}".`
+                  : filterTabEmptyDescription(filterTab)
               }
             />
           )
         ) : (
-          emails.map((email) => (
-            <MessageRow
-              key={email.id}
-              email={email}
-              selected={selectedIds.has(email.id)}
-              active={selectedId === email.id}
-            />
-          ))
+          <>
+            {filtered.map((email) => (
+              <MessageRow
+                key={email.id}
+                email={email}
+                selected={selectedIds.has(email.id)}
+                active={selectedId === email.id}
+              />
+            ))}
+            {canLoadOlder && (
+              <div className="p-4 flex items-center justify-center">
+                <button
+                  onClick={() => void loadOlder()}
+                  disabled={liveLoadingOlder}
+                  className="inline-flex items-center gap-2 h-9 px-4 rounded-lg border border-surface-border dark:border-dark-border text-[13px] hover:bg-surface-hover dark:hover:bg-dark-hover disabled:opacity-50"
+                >
+                  {liveLoadingOlder ? <Loader2 size={13} className="animate-spin" /> : <ChevronDown size={13} />}
+                  Load older messages
+                </button>
+              </div>
+            )}
+            {isLive && !canLoadOlder && liveMessages.length > 0 && (
+              <div className="py-6 text-center text-[11.5px] text-ink-faint dark:text-dark-faint">
+                End of folder
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
   );
+}
+
+function filterTabEmptyDescription(tab: string): string {
+  switch (tab) {
+    case 'unread':
+      return 'No unread messages in this folder.';
+    case 'starred':
+      return 'No starred messages here.';
+    case 'attachments':
+      return 'No messages with attachments in this folder.';
+    default:
+      return 'Messages you receive will appear here.';
+  }
 }
