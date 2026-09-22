@@ -1,0 +1,33 @@
+# Force LF for anything that runs on the Linux server, regardless of
+# whether a developer clones on Windows/macOS/Linux. Without this file,
+# core.autocrlf=true on Windows converts everything to CRLF on checkout
+# and `git archive` bakes CRLF into deploy tarballs, which breaks bash.
+
+# Shell + build scripts
+*.sh              text eol=lf
+*.mjs             text eol=lf
+*.cjs             text eol=lf
+*.js              text eol=lf
+*.ts              text eol=lf
+*.tsx             text eol=lf
+*.json            text eol=lf
+
+# Server-side configuration templates rendered by the deploy scripts
+infra/postfix/**   text eol=lf
+infra/dovecot/**   text eol=lf
+infra/rspamd/**    text eol=lf
+infra/nginx/**     text eol=lf
+infra/systemd/**   text eol=lf
+
+# Prisma
+*.prisma          text eol=lf
+
+# Markdown / config
+*.md              text
+*.yml             text eol=lf
+*.yaml            text eol=lf
+*.env.example     text eol=lf
+
+# Never let CRLF sneak into these
+Dockerfile        text eol=lf
+docker-compose*   text eol=lf
