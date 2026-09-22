@@ -13,7 +13,6 @@ import {
   Moon,
 } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
-import { CURRENT_USER } from '@/data/mockData';
 import { Avatar } from '@/components/ui/Avatar';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -295,8 +294,8 @@ function ProfileSectionImpl(): JSX.Element {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const displayName = user?.name ?? CURRENT_USER.name;
-  const displayEmail = user?.email ?? CURRENT_USER.email;
+  const displayName = user?.name ?? '';
+  const displayEmail = user?.email ?? '';
   const avatarUrl = previewUrl ?? user?.avatarUrl ?? null;
 
   const handleChoose = (): void => fileRef.current?.click();

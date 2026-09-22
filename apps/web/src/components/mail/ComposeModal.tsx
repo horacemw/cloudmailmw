@@ -19,10 +19,10 @@ import {
 import { useUIStore } from '@/store/useUIStore';
 import { useMailStore } from '@/store/useMailStore';
 import { useLiveMailStore } from '@/store/useLiveMailStore';
+import { useAuthStore } from '@/store/useAuthStore';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
 import { Tooltip } from '@/components/ui/Tooltip';
-import { CURRENT_USER } from '@/data/mockData';
 import { cn } from '@/lib/utils';
 import { RecipientChipInput } from './RecipientChipInput';
 import { useResource } from '@/lib/hooks';
@@ -41,10 +41,10 @@ export function ComposeModal(): JSX.Element | null {
   const minimizeCompose = useUIStore((s) => s.minimizeCompose);
   const push = useUIStore((s) => s.pushToast);
   const signature = useUIStore((s) => s.signature);
-  const sendEmail = useMailStore((s) => s.sendEmail);
   const saveDraft = useMailStore((s) => s.saveDraft);
   const updateDraft = useMailStore((s) => s.updateDraft);
   const deleteDraft = useMailStore((s) => s.deleteDraft);
+  const authUser = useAuthStore((s) => s.user);
   const [maximized, setMaximized] = useState(false);
   const [autoSavedAt, setAutoSavedAt] = useState<Date | null>(null);
   const draftIdRef = useRef<string | null>(compose.draftId);
@@ -78,7 +78,7 @@ export function ComposeModal(): JSX.Element | null {
         updateDraft(draftIdRef.current, payload);
       } else {
         const id = saveDraft({
-          from: { name: CURRENT_USER.name, email: CURRENT_USER.email },
+          from: { name: authUser?.name ?? '', email: authUser?.email ?? '' },
           to: payload.to ?? [],
           subject: payload.subject ?? '',
           preview: payload.preview ?? '',
@@ -91,7 +91,7 @@ export function ComposeModal(): JSX.Element | null {
       setAutoSavedAt(new Date());
     }, 4000);
     return () => clearInterval(t);
-  }, [compose, saveDraft, updateDraft, setField, signature]);
+  }, [compose, saveDraft, updateDraft, setField, signature, authUser]);
 
   if (!compose.open) return null;
 
@@ -134,20 +134,14 @@ export function ComposeModal(): JSX.Element | null {
         return;
       }
     }
-    // Fallback: mock store for demo mode.
-    sendEmail({
-      from: { name: CURRENT_USER.name, email: CURRENT_USER.email },
-      to: parseContacts(compose.to),
-      cc: compose.cc ? parseContacts(compose.cc) : undefined,
-      bcc: compose.bcc ? parseContacts(compose.bcc) : undefined,
-      subject: compose.subject || '(no subject)',
-      preview: compose.body.slice(0, 140).replace(/\s+/g, ' '),
-      bodyHtml: bodyToHtml(compose.body, signature),
-      starred: false,
+    // No live mailbox → cannot actually send. Never fake a success — tell the
+    // user honestly and leave the draft intact so they can retry after
+    // connecting a mailbox.
+    push({
+      title: 'Cannot send — no live mailbox connected',
+      description: 'Add and verify a domain, then create a mailbox to send real mail from MailCloud.',
+      tone: 'warning',
     });
-    if (draftIdRef.current) deleteDraft(draftIdRef.current);
-    push({ title: 'Message sent (demo)', tone: 'success' });
-    closeCompose();
   };
 
   const handleSaveDraft = (): void => {
@@ -156,7 +150,7 @@ export function ComposeModal(): JSX.Element | null {
       updateDraft(draftIdRef.current, payload);
     } else {
       saveDraft({
-        from: { name: CURRENT_USER.name, email: CURRENT_USER.email },
+        from: { name: authUser?.name ?? '', email: authUser?.email ?? '' },
         to: payload.to ?? [],
         subject: payload.subject ?? '',
         preview: payload.preview ?? '',

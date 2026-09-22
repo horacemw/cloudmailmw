@@ -22,6 +22,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useMailStore } from '@/store/useMailStore';
 import { useLiveMailStore } from '@/store/useLiveMailStore';
 import { useUIStore } from '@/store/useUIStore';
+import { useAuthStore } from '@/store/useAuthStore';
 import { api, ApiError } from '@/lib/apiClient';
 import { sanitizeEmailHtml } from '@/lib/sanitizeHtml';
 import { IconButton } from '@/components/ui/IconButton';
@@ -382,6 +383,7 @@ function guessAttachmentKind(mime: string, name: string): 'pdf' | 'image' | 'doc
 }
 
 function EmailHeader({ email }: { email: Email }): JSX.Element {
+  const authUserEmail = useAuthStore((s) => s.user?.email ?? '');
   return (
     <div className="px-6 sm:px-8 pt-6 pb-4 border-b border-surface-divider dark:border-dark-divider">
       <h2 className="text-[20px] sm:text-[22px] font-semibold text-ink dark:text-dark-text leading-snug tracking-tight">
@@ -399,7 +401,7 @@ function EmailHeader({ email }: { email: Email }): JSX.Element {
             </span>
           </div>
           <p className="text-[12.5px] text-ink-muted dark:text-dark-muted">
-            to {email.to.map((t) => (t.email === 'info@future4all.org' ? 'me' : t.name)).join(', ')}
+            to {email.to.map((t) => (authUserEmail && t.email === authUserEmail ? 'me' : t.name)).join(', ')}
             {email.cc && email.cc.length > 0 && (
               <> · cc {email.cc.map((t) => t.name).join(', ')}</>
             )}

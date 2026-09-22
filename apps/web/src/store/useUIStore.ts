@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { MOCK_NOTIFICATIONS } from '@/data/mockData';
 import type { Notification } from '@/types';
 import { uid } from '@/lib/utils';
 
@@ -107,7 +106,9 @@ export const useUIStore = create<UIState>((set) => ({
     set((s) => ({ compose: { ...s.compose, [k]: v } })),
   resetCompose: () => set({ compose: emptyCompose }),
 
-  notifications: MOCK_NOTIFICATIONS,
+  // Notifications: no seeded content. Real server-driven notifications flow
+  // in via /v1/notifications (see useLiveMailStore integration + notify.ts).
+  notifications: [],
   markNotificationsRead: () =>
     set((s) => ({
       notifications: s.notifications.map((n) => ({ ...n, read: true })),
@@ -137,6 +138,8 @@ export const useUIStore = create<UIState>((set) => ({
   dismissToast: (id) =>
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 
-  signature: 'Horace Chipembere\nFuture4All — Programme Lead\ninfo@future4all.org',
+  // Default signature is empty in production. Real signatures come from
+  // /v1/signatures once the user creates them.
+  signature: '',
   setSignature: (signature) => set({ signature }),
 }));

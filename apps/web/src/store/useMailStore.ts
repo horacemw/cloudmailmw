@@ -6,11 +6,7 @@ import type {
   Folder,
   FolderId,
 } from '@/types';
-import {
-  CUSTOM_FOLDERS,
-  MOCK_EMAILS,
-  SYSTEM_FOLDERS,
-} from '@/data/mockData';
+import { SYSTEM_FOLDERS } from '@/data/mockData';
 import { uid } from '@/lib/utils';
 
 interface MailState {
@@ -62,10 +58,14 @@ interface MailState {
 }
 
 export const useMailStore = create<MailState>((set, get) => ({
-  emails: MOCK_EMAILS,
-  folders: [...SYSTEM_FOLDERS, ...CUSTOM_FOLDERS],
+  // Local mail-UI state. `emails` starts empty — the production webmail
+  // never seeds demo content. The live message list will populate this via
+  // /v1/mail/* once its wiring lands (currently useLiveMailStore drives
+  // send + folder metadata; message-list read path is pending).
+  emails: [],
+  folders: [...SYSTEM_FOLDERS],
   activeFolderId: 'inbox',
-  selectedEmailId: MOCK_EMAILS[0]?.id ?? null,
+  selectedEmailId: null,
   selectedIds: new Set(),
   filterTab: 'all',
   searchQuery: '',

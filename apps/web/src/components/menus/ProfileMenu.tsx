@@ -1,8 +1,9 @@
 import { HelpCircle, Keyboard, LogOut, Palette, Shield, User } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Avatar } from '@/components/ui/Avatar';
 import { Dropdown, MenuItem, MenuSeparator } from '@/components/ui/Dropdown';
 import { useUIStore } from '@/store/useUIStore';
-import { CURRENT_USER } from '@/data/mockData';
+import { useAuthStore } from '@/store/useAuthStore';
 
 interface Props {
   compact?: boolean;
@@ -12,6 +13,13 @@ export function ProfileMenu({ compact = false }: Props): JSX.Element {
   const openSettings = useUIStore((s) => s.setSettingsOpen);
   const openShortcuts = useUIStore((s) => s.setShortcutsOpen);
   const pushToast = useUIStore((s) => s.pushToast);
+  const user = useAuthStore((s) => s.user);
+  const logout = useAuthStore((s) => s.logout);
+  const navigate = useNavigate();
+
+  const displayName = user?.name ?? 'Signed out';
+  const displayEmail = user?.email ?? '';
+  const avatarEmail = user?.email ?? '';
 
   return (
     <Dropdown
@@ -25,14 +33,14 @@ export function ProfileMenu({ compact = false }: Props): JSX.Element {
             (open ? 'bg-surface-hover dark:bg-dark-hover' : '')
           }
         >
-          <Avatar name={CURRENT_USER.name} email={CURRENT_USER.email} size="md" />
+          <Avatar name={displayName} email={avatarEmail} size="md" />
           {!compact && (
             <div className="text-left leading-tight hidden xl:block">
               <div className="text-[12.5px] font-semibold text-ink dark:text-dark-text">
-                {CURRENT_USER.name}
+                {displayName}
               </div>
               <div className="text-[11px] text-ink-muted dark:text-dark-muted truncate max-w-[140px]">
-                {CURRENT_USER.email}
+                {displayEmail}
               </div>
             </div>
           )}
@@ -42,13 +50,13 @@ export function ProfileMenu({ compact = false }: Props): JSX.Element {
       {({ close }) => (
         <>
           <div className="flex items-center gap-3 p-4">
-            <Avatar name={CURRENT_USER.name} email={CURRENT_USER.email} size="lg" />
+            <Avatar name={displayName} email={avatarEmail} size="lg" />
             <div className="min-w-0">
               <p className="text-sm font-semibold text-ink dark:text-dark-text truncate">
-                {CURRENT_USER.name}
+                {displayName}
               </p>
               <p className="text-[12px] text-ink-muted dark:text-dark-muted truncate">
-                {CURRENT_USER.email}
+                {displayEmail}
               </p>
             </div>
           </div>
@@ -73,7 +81,7 @@ export function ProfileMenu({ compact = false }: Props): JSX.Element {
             icon={<Shield size={14} />}
             label="Security"
             onClick={() => {
-              pushToast({ title: 'Security settings', description: 'Coming in a later phase.' });
+              navigate('/dashboard/security');
               close();
             }}
           />
@@ -99,9 +107,14 @@ export function ProfileMenu({ compact = false }: Props): JSX.Element {
             icon={<LogOut size={14} />}
             label="Sign out"
             danger
-            onClick={() => {
-              pushToast({ title: 'Signed out (demo)', tone: 'success' });
+            onClick={async () => {
               close();
+              try {
+                await logout();
+                navigate('/login');
+              } catch {
+                pushToast({ title: 'Sign-out failed', tone: 'danger' });
+              }
             }}
           />
         </>
