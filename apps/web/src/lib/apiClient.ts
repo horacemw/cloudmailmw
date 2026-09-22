@@ -101,6 +101,41 @@ async function parseResponse<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+/**
+ * Fetch a binary payload (e.g. an attachment download) and return it as a
+ * Blob. Runs through the same auth flow as api() — access token attached,
+ * silent-refresh + retry on 401 — but does not try to parse as JSON.
+ */
+export async function apiFetchBlob(path: string): Promise<Blob> {
+  const url = path.startsWith('http') ? path : `${API_BASE}${path}`;
+  const headers = new Headers();
+  if (accessToken) headers.set('authorization', `Bearer ${accessToken}`);
+  if (currentTenantSlug) headers.set('x-cloudmail-tenant', currentTenantSlug);
+
+  let res = await fetch(url, { headers, credentials: 'include' });
+  if (res.status === 401) {
+    const newToken = await refreshAccessToken();
+    if (newToken) {
+      headers.set('authorization', `Bearer ${newToken}`);
+      res = await fetch(url, { headers, credentials: 'include' });
+    }
+  }
+  if (!res.ok) {
+    // Best-effort JSON error body extraction; fall back to a generic error.
+    let code = 'http_error';
+    let message = `Request failed (${res.status})`;
+    try {
+      const body = (await res.json()) as ApiErrorBody;
+      if (body.error?.code) code = body.error.code;
+      if (body.error?.message) message = body.error.message;
+    } catch {
+      /* not JSON — leave defaults */
+    }
+    throw new ApiError(res.status, code, message);
+  }
+  return res.blob();
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   refreshInFlight ??= (async () => {
     try {

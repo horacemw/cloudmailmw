@@ -3,11 +3,8 @@ import { api, ApiError } from '@/lib/apiClient';
 
 /**
  * Live-mail adapter. When the user has at least one active mailbox and the
- * API is reachable, this store owns folders/messages/actions. The Phase 1
- * mock store still exists for demo mode until the mail server is up.
- *
- * We deliberately keep the shape close to what the UI already consumes so a
- * later refactor to a single unified store is a rename, not a rewrite.
+ * API is reachable, this store owns folders/messages/actions. It talks to
+ * the real /v1/mail/* endpoints — no mock fallback ever lives here.
  */
 
 export interface LiveFolder {
@@ -45,10 +42,16 @@ interface State {
   loadingMessages: boolean;
   error: string | null;
 
+  /** Server-side search. Empty string = no filter. */
+  searchQuery: string;
+
   init: () => Promise<void>;
   selectFolder: (path: string) => Promise<void>;
   refreshFolders: () => Promise<void>;
   refreshMessages: () => Promise<void>;
+
+  setSearch: (q: string) => Promise<void>;
+
   send: (payload: {
     to: string[];
     cc?: string[];
@@ -67,9 +70,41 @@ interface State {
     html?: string;
     replaceUid?: number;
   }) => Promise<{ uid: number | null; folder: string }>;
+
   moveMessage: (uid: number, fromFolder: string, toFolder: string) => Promise<void>;
   setFlags: (uid: number, folder: string, add?: string[], remove?: string[]) => Promise<void>;
+
+  /** Local optimistic patch — flip a flag on the summary row without a refetch. */
+  patchLocalFlags: (uid: number, opts: { add?: string[]; remove?: string[] }) => void;
+  /** Local optimistic drop — remove a row from the current list (e.g. after move). */
+  removeLocal: (uid: number) => void;
+
+  /** Resolve the IMAP path for a well-known special folder. Falls back to
+   *  common English names, and finally to the given default. */
+  folderPathFor: (
+    kind: 'sent' | 'drafts' | 'trash' | 'spam' | 'archive',
+    fallback?: string,
+  ) => string;
 }
+
+const SPECIAL_USE: Record<
+  'sent' | 'drafts' | 'trash' | 'spam' | 'archive',
+  { flag: string; names: string[] }
+> = {
+  sent:    { flag: '\\Sent',    names: ['sent', 'sent messages', 'sent items'] },
+  drafts:  { flag: '\\Drafts',  names: ['drafts'] },
+  trash:   { flag: '\\Trash',   names: ['trash', 'deleted', 'deleted items', 'bin'] },
+  spam:    { flag: '\\Junk',    names: ['spam', 'junk', 'junk e-mail'] },
+  archive: { flag: '\\Archive', names: ['archive', 'archives', 'all mail'] },
+};
+
+const DEFAULT_FALLBACK: Record<'sent' | 'drafts' | 'trash' | 'spam' | 'archive', string> = {
+  sent: 'Sent',
+  drafts: 'Drafts',
+  trash: 'Trash',
+  spam: 'Spam',
+  archive: 'Archive',
+};
 
 export const useLiveMailStore = create<State>((set, get) => ({
   mode: 'checking',
@@ -79,6 +114,7 @@ export const useLiveMailStore = create<State>((set, get) => ({
   messages: [],
   loadingMessages: false,
   error: null,
+  searchQuery: '',
 
   init: async () => {
     set({ mode: 'checking', error: null });
@@ -113,7 +149,8 @@ export const useLiveMailStore = create<State>((set, get) => ({
   },
 
   selectFolder: async (path) => {
-    set({ activeFolder: path });
+    // Clear search when switching folders so results aren't stale.
+    set({ activeFolder: path, searchQuery: '' });
     await get().refreshMessages();
   },
 
@@ -128,10 +165,13 @@ export const useLiveMailStore = create<State>((set, get) => ({
 
   refreshMessages: async () => {
     const folder = get().activeFolder;
-    set({ loadingMessages: true });
+    const search = get().searchQuery.trim();
+    set({ loadingMessages: true, error: null });
     try {
+      const qs = new URLSearchParams({ folder, limit: '50' });
+      if (search) qs.set('search', search);
       const resp = await api<{ messages: LiveMessageSummary[]; nextBefore: number | null }>(
-        `/v1/mail/messages?folder=${encodeURIComponent(folder)}&limit=50`,
+        `/v1/mail/messages?${qs.toString()}`,
       );
       set({ messages: resp.messages, loadingMessages: false });
     } catch (err) {
@@ -140,6 +180,11 @@ export const useLiveMailStore = create<State>((set, get) => ({
         error: err instanceof ApiError ? err.message : 'Could not load messages',
       });
     }
+  },
+
+  setSearch: async (q) => {
+    set({ searchQuery: q });
+    await get().refreshMessages();
   },
 
   send: async (payload) => {
@@ -159,18 +204,64 @@ export const useLiveMailStore = create<State>((set, get) => ({
   },
 
   moveMessage: async (uid, fromFolder, toFolder) => {
-    await api(`/v1/mail/messages/${uid}/move`, {
-      method: 'POST',
-      body: JSON.stringify({ fromFolder, toFolder }),
-    });
-    // Optimistic: drop from current list.
-    set((s) => ({ messages: s.messages.filter((m) => m.uid !== uid) }));
+    // Optimistic — remove from current list before the API confirms so the UI
+    // is snappy. If the API rejects we refetch to restore ground truth.
+    const prev = get().messages;
+    set({ messages: prev.filter((m) => m.uid !== uid) });
+    try {
+      await api(`/v1/mail/messages/${uid}/move`, {
+        method: 'POST',
+        body: JSON.stringify({ fromFolder, toFolder }),
+      });
+      // Fire-and-forget folder-count refresh so the sidebar reflects the move.
+      void get().refreshFolders();
+    } catch (err) {
+      set({ messages: prev, error: err instanceof ApiError ? err.message : 'Move failed' });
+      throw err;
+    }
   },
 
   setFlags: async (uid, folder, add, remove) => {
-    await api(`/v1/mail/messages/${uid}/flags`, {
-      method: 'POST',
-      body: JSON.stringify({ folder, add, remove }),
-    });
+    // Optimistic flag patch on the local summary row.
+    const prev = get().messages;
+    get().patchLocalFlags(uid, { add, remove });
+    try {
+      await api(`/v1/mail/messages/${uid}/flags`, {
+        method: 'POST',
+        body: JSON.stringify({ folder, add, remove }),
+      });
+      // Read/unread state feeds the sidebar unread badge; refresh in the background.
+      void get().refreshFolders();
+    } catch (err) {
+      set({ messages: prev, error: err instanceof ApiError ? err.message : 'Flag change failed' });
+      throw err;
+    }
+  },
+
+  patchLocalFlags: (uid, { add, remove }) => {
+    set((s) => ({
+      messages: s.messages.map((m) => {
+        if (m.uid !== uid) return m;
+        const flags = new Set(m.flags ?? []);
+        for (const f of add ?? []) flags.add(f);
+        for (const f of remove ?? []) flags.delete(f);
+        return { ...m, flags: [...flags] };
+      }),
+    }));
+  },
+
+  removeLocal: (uid) => {
+    set((s) => ({ messages: s.messages.filter((m) => m.uid !== uid) }));
+  },
+
+  folderPathFor: (kind, fallback) => {
+    const meta = SPECIAL_USE[kind];
+    const folders = get().folders;
+    // Prefer IMAP special-use tag; then a name match; then fallback.
+    const bySpecial = folders.find((f) => f.specialUse === meta.flag);
+    if (bySpecial) return bySpecial.path;
+    const byName = folders.find((f) => meta.names.includes(f.name.toLowerCase()));
+    if (byName) return byName.path;
+    return fallback ?? DEFAULT_FALLBACK[kind];
   },
 }));

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Bell,
   Calendar,
@@ -15,6 +15,7 @@ import { Logo, LogoMark } from '@/components/ui/Logo';
 import { IconButton } from '@/components/ui/IconButton';
 import { Tooltip } from '@/components/ui/Tooltip';
 import { useMailStore } from '@/store/useMailStore';
+import { useLiveMailStore } from '@/store/useLiveMailStore';
 import { useUIStore } from '@/store/useUIStore';
 import { NotificationMenu } from '@/components/menus/NotificationMenu';
 import { ProfileMenu } from '@/components/menus/ProfileMenu';
@@ -106,9 +107,48 @@ export function TopBar(): JSX.Element {
 }
 
 function SearchBar({ shortcutHint }: { shortcutHint: string }): JSX.Element {
-  const searchQuery = useMailStore((s) => s.searchQuery);
-  const setSearchQuery = useMailStore((s) => s.setSearchQuery);
+  const mockSearchQuery = useMailStore((s) => s.searchQuery);
+  const setMockSearchQuery = useMailStore((s) => s.setSearchQuery);
+  const liveMode = useLiveMailStore((s) => s.mode);
+  const liveSearchQuery = useLiveMailStore((s) => s.searchQuery);
+  const setLiveSearch = useLiveMailStore((s) => s.setSearch);
+  const isLive = liveMode === 'ready';
+
+  const value = isLive ? liveSearchQuery : mockSearchQuery;
   const [focused, setFocused] = useState(false);
+  const [localValue, setLocalValue] = useState(value);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Keep the local input in sync when the source-of-truth changes externally
+  // (e.g. switching folders clears searchQuery).
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const commit = (v: string): void => {
+    if (isLive) void setLiveSearch(v);
+    else setMockSearchQuery(v);
+  };
+
+  const scheduleCommit = (v: string): void => {
+    setLocalValue(v);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    // Debounce so we don't fire an IMAP search on every keystroke.
+    debounceRef.current = setTimeout(() => {
+      commit(v);
+    }, 300);
+  };
+
+  const clear = (): void => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    setLocalValue('');
+    commit('');
+  };
+
+  useEffect(() => () => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+  }, []);
+
   return (
     <div
       className={
@@ -120,17 +160,23 @@ function SearchBar({ shortcutHint }: { shortcutHint: string }): JSX.Element {
       <input
         id="cloudmail-search"
         type="text"
-        placeholder="Search mail, contacts, files..."
-        value={searchQuery}
-        onChange={(e) => setSearchQuery(e.target.value)}
+        placeholder={isLive ? 'Search this folder…' : 'Search mail…'}
+        value={localValue}
+        onChange={(e) => scheduleCommit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            if (debounceRef.current) clearTimeout(debounceRef.current);
+            commit(localValue);
+          }
+        }}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         className="flex-1 min-w-0 bg-transparent px-2.5 text-sm outline-none placeholder:text-ink-muted dark:placeholder:text-dark-muted"
         aria-label="Search mail"
       />
-      {searchQuery ? (
+      {localValue ? (
         <button
-          onClick={() => setSearchQuery('')}
+          onClick={clear}
           aria-label="Clear search"
           className="mr-2 text-ink-muted hover:text-ink dark:text-dark-muted dark:hover:text-dark-text"
         >

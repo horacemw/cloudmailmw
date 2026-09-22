@@ -1,5 +1,6 @@
 import { Paperclip, ShieldCheck, Star } from 'lucide-react';
 import { useMailStore } from '@/store/useMailStore';
+import { useLiveMailStore } from '@/store/useLiveMailStore';
 import { useUIStore } from '@/store/useUIStore';
 import { Avatar } from '@/components/ui/Avatar';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -15,8 +16,33 @@ interface Props {
 export function MessageRow({ email, selected, active }: Props): JSX.Element {
   const toggleSelected = useMailStore((s) => s.toggleSelected);
   const selectEmail = useMailStore((s) => s.selectEmail);
-  const toggleStar = useMailStore((s) => s.toggleStar);
+  const mockToggleStar = useMailStore((s) => s.toggleStar);
   const setPaneOpen = useUIStore((s) => s.setReadingPaneOpenMobile);
+  const push = useUIStore((s) => s.pushToast);
+
+  const isLive = useLiveMailStore((s) => s.mode) === 'ready';
+  const liveFolder = useLiveMailStore((s) => s.activeFolder);
+  const setFlags = useLiveMailStore((s) => s.setFlags);
+
+  const handleStar = async (): Promise<void> => {
+    if (isLive && email.id.startsWith('live-')) {
+      const uid = Number.parseInt(email.id.slice(5), 10);
+      if (!Number.isFinite(uid)) return;
+      const nextStarred = !email.starred;
+      try {
+        await setFlags(
+          uid,
+          liveFolder,
+          nextStarred ? ['\\Flagged'] : undefined,
+          nextStarred ? undefined : ['\\Flagged'],
+        );
+      } catch (err) {
+        push({ title: 'Star failed', description: err instanceof Error ? err.message : undefined, tone: 'danger' });
+      }
+    } else {
+      mockToggleStar(email.id);
+    }
+  };
 
   const unread = !email.read;
 
@@ -58,7 +84,7 @@ export function MessageRow({ email, selected, active }: Props): JSX.Element {
           size="sm"
         />
         <button
-          onClick={() => toggleStar(email.id)}
+          onClick={() => void handleStar()}
           aria-label={email.starred ? 'Unstar' : 'Star'}
           className={cn(
             'transition-colors',

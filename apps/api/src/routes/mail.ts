@@ -172,6 +172,66 @@ const routes: FastifyPluginAsync = async (fastify) => {
     },
   });
 
+  /* ─── GET /v1/mail/messages/:uid/attachments/:index ──────────
+   *  Streams a single parsed attachment straight to the browser.
+   *  Scoped through resolveMailboxForRequest so cross-tenant reads
+   *  fail with 404. The parsed index is 0-based and MUST match the
+   *  order simpleParser returned in /v1/mail/messages/:uid.
+   */
+  fastify.get('/messages/:uid/attachments/:index', {
+    preHandler: [fastify.requireAuth, (req) => fastify.requireTenant(req)],
+    handler: async (req, reply) => {
+      const { uid, index } = z
+        .object({
+          uid: z.coerce.number().int().positive(),
+          index: z.coerce.number().int().min(0).max(50),
+        })
+        .parse(req.params);
+      const q = z.object({ folder: z.string().default('INBOX') }).parse(req.query);
+      const mb = await resolveMailboxForRequest(req);
+      return withImap({ mailboxAddress: mb.address, folder: q.folder, readOnly: true }, async (c) => {
+        const fetched = await c.fetchOne(`${uid}`, { source: true }, { uid: true });
+        if (!fetched || !fetched.source) throw errors.notFound('message_not_found');
+        const parsed = await simpleParser(fetched.source);
+        const att = (parsed.attachments ?? [])[index];
+        if (!att) throw errors.notFound('attachment_not_found');
+        // Sanitise the filename so Content-Disposition can't be smuggled with CR/LF.
+        const safeFilename = (att.filename ?? `attachment-${index}`)
+          .replace(/[\r\n"\\]/g, '_')
+          .slice(0, 200);
+        reply.header('Content-Type', att.contentType || 'application/octet-stream');
+        reply.header('Content-Length', att.content.length);
+        reply.header('Content-Disposition', `attachment; filename="${safeFilename}"`);
+        reply.header('X-Content-Type-Options', 'nosniff');
+        reply.header('Cache-Control', 'private, no-store');
+        return reply.send(att.content);
+      });
+    },
+  });
+
+  /* ─── GET /v1/mail/messages/:uid/raw ────────────────────────
+   *  Full RFC822 source download ("Download original"). Small
+   *  message-content window; do not use for bulk export (use the
+   *  export job for that).
+   */
+  fastify.get('/messages/:uid/raw', {
+    preHandler: [fastify.requireAuth, (req) => fastify.requireTenant(req)],
+    handler: async (req, reply) => {
+      const { uid } = z.object({ uid: z.coerce.number().int().positive() }).parse(req.params);
+      const q = z.object({ folder: z.string().default('INBOX') }).parse(req.query);
+      const mb = await resolveMailboxForRequest(req);
+      return withImap({ mailboxAddress: mb.address, folder: q.folder, readOnly: true }, async (c) => {
+        const fetched = await c.fetchOne(`${uid}`, { source: true }, { uid: true });
+        if (!fetched || !fetched.source) throw errors.notFound('message_not_found');
+        reply.header('Content-Type', 'message/rfc822');
+        reply.header('Content-Disposition', `attachment; filename="message-${uid}.eml"`);
+        reply.header('X-Content-Type-Options', 'nosniff');
+        reply.header('Cache-Control', 'private, no-store');
+        return reply.send(fetched.source);
+      });
+    },
+  });
+
   /* ─── POST /v1/mail/messages/:uid/flags ───────────────────────── */
   fastify.post('/messages/:uid/flags', {
     preHandler: [fastify.requireAuth, (req) => fastify.requireTenant(req)],

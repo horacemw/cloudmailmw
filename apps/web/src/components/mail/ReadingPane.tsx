@@ -1,7 +1,6 @@
 import {
   Archive,
   ArrowLeft,
-  Clock,
   CornerUpLeft,
   CornerUpRight,
   Download,
@@ -15,7 +14,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   Star,
-  Tag,
   Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -164,13 +162,22 @@ export function ReadingPane(): JSX.Element {
     <section className="flex flex-col h-full min-h-0 bg-white dark:bg-dark-panel">
       {email ? (
         <>
-          <ReadingToolbar email={email} onBack={() => setPaneOpen(false)} />
+          <ReadingToolbar
+            email={email}
+            onBack={() => setPaneOpen(false)}
+            liveUid={liveUid}
+            liveFolder={liveFolder}
+          />
           <div className="flex-1 overflow-y-auto scroll-thin">
             <EmailHeader email={email} />
             {email.trusted && <TrustedBanner />}
             <div className="px-6 sm:px-8 py-6 email-prose" dangerouslySetInnerHTML={{ __html: email.bodyHtml }} />
             {email.attachments && email.attachments.length > 0 && (
-              <AttachmentList attachments={email.attachments} />
+              <AttachmentList
+                attachments={email.attachments}
+                liveUid={liveUid}
+                liveFolder={liveFolder}
+              />
             )}
             <ReplyActions email={email} />
           </div>
@@ -187,22 +194,111 @@ export function ReadingPane(): JSX.Element {
   );
 }
 
-function ReadingToolbar({ email, onBack }: { email: Email; onBack: () => void }): JSX.Element {
-  const toggleStar = useMailStore((s) => s.toggleStar);
-  const archive = useMailStore((s) => s.archive);
-  const spam = useMailStore((s) => s.moveToSpam);
-  const trash = useMailStore((s) => s.moveToTrash);
-  const snooze = useMailStore((s) => s.snooze);
-  const markRead = useMailStore((s) => s.markRead);
-  const moveTo = useMailStore((s) => s.moveTo);
-  const folders = useMailStore((s) => s.folders);
+function ReadingToolbar({
+  email,
+  onBack,
+  liveUid,
+  liveFolder,
+}: {
+  email: Email;
+  onBack: () => void;
+  liveUid: number | null;
+  liveFolder: string;
+}): JSX.Element {
+  const isLive = liveUid != null;
+  const setFlags = useLiveMailStore((s) => s.setFlags);
+  const moveMessage = useLiveMailStore((s) => s.moveMessage);
+  const folderPathFor = useLiveMailStore((s) => s.folderPathFor);
+  const liveFolders = useLiveMailStore((s) => s.folders);
+
+  // Mock actions (still used in demo mode against the empty store).
+  const mockToggleStar = useMailStore((s) => s.toggleStar);
+  const mockArchive = useMailStore((s) => s.archive);
+  const mockSpam = useMailStore((s) => s.moveToSpam);
+  const mockTrash = useMailStore((s) => s.moveToTrash);
+  const mockMarkRead = useMailStore((s) => s.markRead);
+  const mockMoveTo = useMailStore((s) => s.moveTo);
+  const mockFolders = useMailStore((s) => s.folders);
   const selectEmail = useMailStore((s) => s.selectEmail);
   const push = useUIStore((s) => s.pushToast);
 
-  const act = (fn: () => void, msg: string): void => {
-    fn();
-    push({ title: msg, tone: 'success' });
+  const doStar = async (): Promise<void> => {
+    if (isLive) {
+      const nextStarred = !email.starred;
+      try {
+        await setFlags(liveUid!, liveFolder, nextStarred ? ['\\Flagged'] : undefined, nextStarred ? undefined : ['\\Flagged']);
+        push({ title: nextStarred ? 'Starred' : 'Unstarred', tone: 'success' });
+      } catch (err) {
+        push({ title: 'Star failed', description: err instanceof Error ? err.message : undefined, tone: 'danger' });
+      }
+    } else {
+      mockToggleStar(email.id);
+    }
   };
+
+  const doMarkUnread = async (): Promise<void> => {
+    if (isLive) {
+      try {
+        await setFlags(liveUid!, liveFolder, undefined, ['\\Seen']);
+        push({ title: 'Marked as unread', tone: 'success' });
+      } catch (err) {
+        push({ title: 'Failed to mark unread', description: err instanceof Error ? err.message : undefined, tone: 'danger' });
+      }
+    } else {
+      mockMarkRead([email.id], false);
+      push({ title: 'Marked as unread' });
+    }
+  };
+
+  const doMoveTo = async (targetKind: 'archive' | 'spam' | 'trash', label: string): Promise<void> => {
+    if (isLive) {
+      const targetPath = folderPathFor(targetKind);
+      if (liveFolder === targetPath) {
+        push({ title: `Already in ${label}` });
+        return;
+      }
+      try {
+        await moveMessage(liveUid!, liveFolder, targetPath);
+        push({ title: label, tone: 'success' });
+        selectEmail(null);
+      } catch (err) {
+        push({ title: `Move failed`, description: err instanceof Error ? err.message : undefined, tone: 'danger' });
+      }
+    } else {
+      if (targetKind === 'archive') mockArchive([email.id]);
+      if (targetKind === 'spam') mockSpam([email.id]);
+      if (targetKind === 'trash') mockTrash([email.id]);
+      push({ title: label, tone: 'success' });
+      selectEmail(null);
+    }
+  };
+
+  const doDownloadOriginal = async (): Promise<void> => {
+    if (!isLive) {
+      push({ title: 'Original download requires a real mailbox' });
+      return;
+    }
+    // Route through the API client so the request carries the Authorization
+    // header. We need the raw blob to trigger a save-as dialog.
+    try {
+      const { apiFetchBlob } = await import('@/lib/apiClient');
+      const blob = await apiFetchBlob(
+        `/v1/mail/messages/${liveUid}/raw?folder=${encodeURIComponent(liveFolder)}`,
+      );
+      triggerBlobDownload(blob, `message-${liveUid}.eml`);
+    } catch (err) {
+      push({ title: 'Download failed', description: err instanceof Error ? err.message : undefined, tone: 'danger' });
+    }
+  };
+
+  // The Move-to dropdown lists the mailbox's user-visible folders.
+  const moveTargets = isLive
+    ? liveFolders
+        .filter((f) => f.path !== liveFolder)
+        .map((f) => ({ key: f.path, label: f.path === 'INBOX' ? 'Inbox' : f.name }))
+    : mockFolders
+        .filter((f) => f.id !== email.folderId && f.id !== 'starred')
+        .map((f) => ({ key: f.id, label: f.name }));
 
   return (
     <div className="flex items-center gap-1 px-3 sm:px-5 h-14 border-b border-surface-divider dark:border-dark-divider">
@@ -215,52 +311,17 @@ function ReadingToolbar({ email, onBack }: { email: Email; onBack: () => void })
         />
       </Tooltip>
       <Tooltip label="Archive (E)">
-        <IconButton
-          icon={<Archive size={16} />}
-          label="Archive"
-          onClick={() => {
-            act(() => archive([email.id]), 'Archived');
-            selectEmail(null);
-          }}
-        />
+        <IconButton icon={<Archive size={16} />} label="Archive" onClick={() => void doMoveTo('archive', 'Archived')} />
       </Tooltip>
       <Tooltip label="Report spam">
-        <IconButton
-          icon={<ShieldAlert size={16} />}
-          label="Spam"
-          onClick={() => {
-            act(() => spam([email.id]), 'Reported as spam');
-            selectEmail(null);
-          }}
-        />
+        <IconButton icon={<ShieldAlert size={16} />} label="Spam" onClick={() => void doMoveTo('spam', 'Reported as spam')} />
       </Tooltip>
       <Tooltip label="Delete (⌫)">
-        <IconButton
-          icon={<Trash2 size={16} />}
-          label="Delete"
-          onClick={() => {
-            act(() => trash([email.id]), 'Moved to Trash');
-            selectEmail(null);
-          }}
-        />
+        <IconButton icon={<Trash2 size={16} />} label="Delete" onClick={() => void doMoveTo('trash', 'Moved to Trash')} />
       </Tooltip>
       <div className="mx-1 h-5 w-px bg-surface-divider dark:bg-dark-divider" />
       <Tooltip label="Mark as unread">
-        <IconButton
-          icon={<Mail size={16} />}
-          label="Mark unread"
-          onClick={() => act(() => markRead([email.id], false), 'Marked as unread')}
-        />
-      </Tooltip>
-      <Tooltip label="Snooze">
-        <IconButton
-          icon={<Clock size={16} />}
-          label="Snooze"
-          onClick={() => {
-            act(() => snooze([email.id]), 'Snoozed for 1 hour');
-            selectEmail(null);
-          }}
-        />
+        <IconButton icon={<Mail size={16} />} label="Mark unread" onClick={() => void doMarkUnread()} />
       </Tooltip>
       <Dropdown
         width="w-52"
@@ -278,29 +339,30 @@ function ReadingToolbar({ email, onBack }: { email: Email; onBack: () => void })
         {({ close }) => (
           <>
             <MenuSection label="Move to folder" />
-            {folders
-              .filter((f) => f.id !== email.folderId && f.id !== 'starred')
-              .slice(0, 12)
-              .map((f) => (
-                <MenuItem
-                  key={f.id}
-                  label={f.name}
-                  onClick={() => {
-                    act(() => moveTo([email.id], f.id), `Moved to ${f.name}`);
-                    close();
-                  }}
-                />
-              ))}
+            {moveTargets.slice(0, 20).map((f) => (
+              <MenuItem
+                key={f.key}
+                label={f.label}
+                onClick={async () => {
+                  if (isLive) {
+                    try {
+                      await moveMessage(liveUid!, liveFolder, f.key);
+                      push({ title: `Moved to ${f.label}`, tone: 'success' });
+                      selectEmail(null);
+                    } catch (err) {
+                      push({ title: 'Move failed', description: err instanceof Error ? err.message : undefined, tone: 'danger' });
+                    }
+                  } else {
+                    mockMoveTo([email.id], f.key);
+                    push({ title: `Moved to ${f.label}`, tone: 'success' });
+                  }
+                  close();
+                }}
+              />
+            ))}
           </>
         )}
       </Dropdown>
-      <Tooltip label="Labels">
-        <IconButton
-          icon={<Tag size={16} />}
-          label="Labels"
-          onClick={() => push({ title: 'Labels — coming in a later phase' })}
-        />
-      </Tooltip>
       <div className="ml-auto flex items-center gap-1">
         <Tooltip label={email.starred ? 'Unstar' : 'Star'}>
           <IconButton
@@ -312,12 +374,12 @@ function ReadingToolbar({ email, onBack }: { email: Email; onBack: () => void })
             }
             label={email.starred ? 'Unstar' : 'Star'}
             tone={email.starred ? 'active' : 'default'}
-            onClick={() => toggleStar(email.id)}
+            onClick={() => void doStar()}
             className={email.starred ? 'text-amber-500 bg-amber-50 dark:bg-amber-900/20' : ''}
           />
         </Tooltip>
         <Dropdown
-          width="w-48"
+          width="w-52"
           trigger={({ toggle, open }) => (
             <IconButton
               icon={<MoreHorizontal size={16} />}
@@ -339,16 +401,9 @@ function ReadingToolbar({ email, onBack }: { email: Email; onBack: () => void })
               />
               <MenuItem
                 icon={<Download size={14} />}
-                label="Download original"
+                label="Download original (.eml)"
                 onClick={() => {
-                  push({ title: 'Message downloaded (demo)', tone: 'success' });
-                  close();
-                }}
-              />
-              <MenuItem
-                label="Block sender"
-                onClick={() => {
-                  push({ title: `${email.from.email} blocked`, tone: 'success' });
+                  void doDownloadOriginal();
                   close();
                 }}
               />
@@ -380,6 +435,18 @@ function guessAttachmentKind(mime: string, name: string): 'pdf' | 'image' | 'doc
   if (m.includes('sheet') || m.includes('excel') || n.endsWith('.xls') || n.endsWith('.xlsx') || n.endsWith('.csv')) return 'sheet';
   if (m.includes('zip') || n.endsWith('.zip')) return 'zip';
   return 'other';
+}
+
+function triggerBlobDownload(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Give the browser a moment to start the download before revoking.
+  setTimeout(() => URL.revokeObjectURL(url), 5_000);
 }
 
 function EmailHeader({ email }: { email: Email }): JSX.Element {
@@ -424,14 +491,40 @@ function TrustedBanner(): JSX.Element {
   );
 }
 
-function AttachmentList({ attachments }: { attachments: NonNullable<Email['attachments']> }): JSX.Element {
+function AttachmentList({
+  attachments,
+  liveUid,
+  liveFolder,
+}: {
+  attachments: NonNullable<Email['attachments']>;
+  liveUid: number | null;
+  liveFolder: string;
+}): JSX.Element {
+  const push = useUIStore((s) => s.pushToast);
+
+  const download = async (index: number, filename: string): Promise<void> => {
+    if (liveUid == null) {
+      push({ title: 'Attachment download requires a real mailbox' });
+      return;
+    }
+    try {
+      const { apiFetchBlob } = await import('@/lib/apiClient');
+      const blob = await apiFetchBlob(
+        `/v1/mail/messages/${liveUid}/attachments/${index}?folder=${encodeURIComponent(liveFolder)}`,
+      );
+      triggerBlobDownload(blob, filename);
+    } catch (err) {
+      push({ title: 'Download failed', description: err instanceof Error ? err.message : undefined, tone: 'danger' });
+    }
+  };
+
   return (
     <div className="px-6 sm:px-8 pb-6">
       <p className="text-[12px] uppercase tracking-wider font-semibold text-ink-faint dark:text-dark-faint mb-2">
         {attachments.length} attachment{attachments.length === 1 ? '' : 's'}
       </p>
       <div className="grid gap-2 sm:grid-cols-2">
-        {attachments.map((a) => (
+        {attachments.map((a, index) => (
           <div
             key={a.id}
             className="flex items-center gap-3 rounded-xl border border-surface-border dark:border-dark-border p-3 hover:border-brand-300 transition-colors"
@@ -456,6 +549,7 @@ function AttachmentList({ attachments }: { attachments: NonNullable<Email['attac
             </div>
             <button
               aria-label={`Download ${a.name}`}
+              onClick={() => void download(index, a.name)}
               className="text-ink-muted hover:text-brand-700 dark:text-dark-muted dark:hover:text-brand-300"
             >
               <Download size={16} />
