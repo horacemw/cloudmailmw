@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Serialise runs per-ref so an in-flight main build is cancelled by a newer
+# push. PRs get their own concurrency group per branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install workspace dependencies
+        # `npm ci` is stricter than `install` and matches the lockfile exactly.
+        # `--ignore-scripts` avoids any accidental postinstall side-effects
+        # that might reach out over the network from a transitive dep.
+        run: npm ci --ignore-scripts
+
+      - name: Generate Prisma client
+        # tsc cannot compile apps/api without @prisma/client's generated
+        # types. Runs the schema in apps/api/prisma/schema.prisma.
+        run: npm run prisma:generate
+
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck
+
+      - name: Build (api + web)
+        run: npm run build
+
+      - name: Fail if git status is dirty after build
+        # Any file changes during build indicate an artefact leaking into the
+        # tree (e.g. a *.tsbuildinfo that isn't gitignored). Keep the tree
+        # deterministic so future PRs are diffable.
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Build produced uncommitted changes:"
+            git status --short
+            git diff --stat
+            exit 1
+          fi
