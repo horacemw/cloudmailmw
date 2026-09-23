@@ -87,10 +87,14 @@ export function MessageRow({ email, selected, active }: Props): JSX.Element {
           onClick={() => void handleStar()}
           aria-label={email.starred ? 'Unstar' : 'Star'}
           className={cn(
-            'transition-colors',
+            'inline-flex items-center justify-center h-8 w-8 -m-1 rounded transition-colors touch-manipulation',
+            // Always visible on touch devices (mobile has no hover, so the
+            // "reveal-on-hover" pattern permanently hides this button).
+            // On sm+ (desktop-ish widths) we restore the hover-to-reveal
+            // behaviour so the list stays visually calm at rest.
             email.starred
               ? 'text-amber-400 hover:text-amber-500'
-              : 'text-ink-faint hover:text-amber-400 opacity-0 group-hover:opacity-100',
+              : 'text-ink-faint hover:text-amber-400 sm:opacity-0 sm:group-hover:opacity-100',
             email.starred && 'opacity-100',
           )}
         >

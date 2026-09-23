@@ -63,29 +63,58 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   bootstrap: async () => {
     if (get().ready) return;
+    // Two-phase: (1) silent refresh via cm_rt cookie to acquire an access
+    // token, (2) /me to hydrate user + tenants. If phase 1 fails, the user
+    // has no session — render them anonymous. If phase 2 fails after phase 1
+    // succeeded, RETRY /me a couple times before giving up: a transient
+    // network hiccup should not evict a valid session on page reload.
+    const apiBase = import.meta.env.VITE_API_URL ?? '';
+    let refreshOk = false;
     try {
-      // Try to refresh silently — server checks the cm_rt cookie.
-      // Relative URL — served by nginx in prod, by Vite proxy in dev.
-      // NEVER hard-code a localhost fallback in production; it triggers
-      // Chrome's Local Network Access permission and breaks real users.
-      const apiBase = import.meta.env.VITE_API_URL ?? '';
       const refresh = await fetch(`${apiBase}/v1/auth/refresh`, {
         method: 'POST',
         credentials: 'include',
       });
       if (refresh.ok) {
+        refreshOk = true;
         const { accessToken } = (await refresh.json()) as { accessToken: string };
         setAccessToken(accessToken);
-        const me = await api<{ user: CurrentUser; tenants: TenantSummary[] }>('/v1/auth/me');
-        const active = me.tenants[0] ?? null;
-        if (active) setCurrentTenant(active.slug);
-        set({ user: me.user, tenants: me.tenants, activeTenant: active });
+      } else if (refresh.status !== 401) {
+        // 401 = no/expired refresh cookie (normal for anonymous or stale user).
+        // Anything else is unexpected — surface it in the console so the
+        // customer's DevTools has a hint we can debug against.
+        console.warn('[auth.bootstrap] refresh returned unexpected status', refresh.status);
       }
-    } catch {
-      /* no session — user stays anonymous */
-    } finally {
-      set({ ready: true });
+    } catch (err) {
+      console.warn('[auth.bootstrap] refresh network error', err);
     }
+
+    if (refreshOk) {
+      // /me hydration with 2 retries + short backoff. Only retries on
+      // NETWORK/5xx failures; a 401 here means the token we just minted is
+      // already invalid, which is a real logout and shouldn't be retried.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const me = await api<{ user: CurrentUser; tenants: TenantSummary[] }>('/v1/auth/me');
+          const active = me.tenants[0] ?? null;
+          if (active) setCurrentTenant(active.slug);
+          set({ user: me.user, tenants: me.tenants, activeTenant: active });
+          break;
+        } catch (err) {
+          if (err instanceof ApiError && err.status === 401) {
+            console.warn('[auth.bootstrap] /me returned 401 after successful refresh — token likely revoked');
+            break;
+          }
+          if (attempt === 2) {
+            console.warn('[auth.bootstrap] /me failed after 3 attempts', err);
+            break;
+          }
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
+    }
+
+    set({ ready: true });
   },
 
   login: async (email, password) => {

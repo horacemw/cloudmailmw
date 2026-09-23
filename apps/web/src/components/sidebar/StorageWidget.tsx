@@ -1,13 +1,101 @@
+import { useEffect, useState } from 'react';
 import { HardDrive } from 'lucide-react';
 import { useUIStore } from '@/store/useUIStore';
+import { useLiveMailStore } from '@/store/useLiveMailStore';
+import { api } from '@/lib/apiClient';
 import { cn } from '@/lib/utils';
 
-const STORAGE_USED_GB = 6.8;
-const STORAGE_TOTAL_GB = 10;
+interface MailboxUsage {
+  id: string;
+  address: string;
+  quotaBytes: string;
+  usedBytes: string;
+}
 
-export function StorageWidget(): JSX.Element {
-  const pct = Math.round((STORAGE_USED_GB / STORAGE_TOTAL_GB) * 100);
+interface MailboxesResponse {
+  mailboxes: Array<{
+    id: string;
+    address: string;
+    quotaBytes: string;
+    usedBytes: string;
+    status: string;
+  }>;
+}
+
+function formatBytes(bytesStr: string): string {
+  const bytes = Number(bytesStr);
+  if (!Number.isFinite(bytes) || bytes < 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let n = bytes;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  const rounded = n >= 100 ? Math.round(n) : n >= 10 ? n.toFixed(1) : n.toFixed(2);
+  return `${rounded} ${units[i]}`;
+}
+
+/**
+ * Live storage widget. Reads the caller's own mailbox usage from
+ * /v1/mailboxes and displays real numbers. Hidden entirely when the user has
+ * no mailbox yet (org owners/admins without a mailbox of their own) rather
+ * than showing a misleading "0%" bar.
+ */
+export function StorageWidget(): JSX.Element | null {
   const openStorage = useUIStore((s) => s.setStorageOpen);
+  const liveMode = useLiveMailStore((s) => s.mode);
+  const liveMailbox = useLiveMailStore((s) => s.mailbox);
+  const [usage, setUsage] = useState<MailboxUsage | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Only fetch when we actually have a live mailbox to look up — otherwise
+    // we'd either 401 or return an empty list. Refetch when the mailbox id
+    // changes (rare: e.g. after backfill or admin action).
+    if (!liveMailbox?.id) {
+      setUsage(null);
+      setLoaded(true);
+      return;
+    }
+    (async () => {
+      try {
+        const resp = await api<MailboxesResponse>('/v1/mailboxes');
+        if (cancelled) return;
+        const mine = resp.mailboxes.find((m) => m.id === liveMailbox.id) ?? resp.mailboxes[0];
+        setUsage(
+          mine
+            ? {
+                id: mine.id,
+                address: mine.address,
+                quotaBytes: mine.quotaBytes,
+                usedBytes: mine.usedBytes,
+              }
+            : null,
+        );
+      } catch {
+        // Silent — the sidebar still renders; widget just won't show numbers.
+        setUsage(null);
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [liveMailbox?.id]);
+
+  // Hide the widget entirely when there's no mailbox context. Better than a
+  // stub bar for admin-only users.
+  if (liveMode !== 'ready' || !usage) {
+    if (!loaded) return null;
+    return null;
+  }
+
+  const used = Number(usage.usedBytes);
+  const quota = Number(usage.quotaBytes);
+  const pct = quota > 0 ? Math.min(100, Math.round((used / quota) * 100)) : 0;
   const highUsage = pct >= 80;
 
   return (
@@ -37,7 +125,7 @@ export function StorageWidget(): JSX.Element {
         />
       </div>
       <p className="text-[11.5px] text-ink-muted dark:text-dark-muted mt-2">
-        {STORAGE_USED_GB} GB of {STORAGE_TOTAL_GB} GB used
+        {formatBytes(usage.usedBytes)} of {formatBytes(usage.quotaBytes)} used
       </p>
       <button
         onClick={() => openStorage(true)}

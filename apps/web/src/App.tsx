@@ -1,5 +1,6 @@
 import { Suspense, useEffect } from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LandingPage } from '@/pages/LandingPage';
 import { LoginPage } from '@/pages/auth/LoginPage';
 import { AdminLoginPage } from '@/pages/auth/AdminLoginPage';
@@ -44,6 +45,7 @@ export default function App(): JSX.Element {
   if (!ready) return <FullPageSpinner />;
 
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <Suspense fallback={<FullPageSpinner />}>
         <Routes>
@@ -95,13 +97,21 @@ export default function App(): JSX.Element {
 
           {/* Webmail — the Phase 1 experience, now authenticated */}
           <Route element={<RequireAuth />}>
-            <Route path="/mail/*" element={<AppShell />} />
+            <Route
+              path="/mail/*"
+              element={
+                <ErrorBoundary scope="webmail">
+                  <AppShell />
+                </ErrorBoundary>
+              }
+            />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Suspense>
     </BrowserRouter>
+    </ErrorBoundary>
   );
 }
 

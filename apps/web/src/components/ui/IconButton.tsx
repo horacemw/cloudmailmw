@@ -8,10 +8,13 @@ interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   tone?: 'default' | 'active' | 'danger';
 }
 
+// Sizes chosen with touch in mind: even `sm` should be tappable on phones.
+// Apple HIG minimum is 44pt (~44px @ 1x). Below that miss-rate climbs sharply
+// on small screens. Desktop density isn't materially hurt by 40px buttons.
 const SIZES = {
-  sm: 'h-8 w-8',
-  md: 'h-9 w-9',
-  lg: 'h-10 w-10',
+  sm: 'h-9 w-9',
+  md: 'h-10 w-10',
+  lg: 'h-11 w-11',
 };
 
 const TONES = {
@@ -37,6 +40,9 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
           'inline-flex items-center justify-center rounded-lg transition-colors',
           'focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-1',
           'focus-visible:ring-offset-white dark:focus-visible:ring-offset-dark-bg',
+          // touch-action:manipulation removes iOS Safari's ~300ms tap-delay
+          // wait-for-double-tap-zoom logic on interactive elements.
+          'touch-manipulation',
           SIZES[size],
           TONES[tone],
           className,

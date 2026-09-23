@@ -33,7 +33,7 @@ export function ProfileMenu({ compact = false }: Props): JSX.Element {
             (open ? 'bg-surface-hover dark:bg-dark-hover' : '')
           }
         >
-          <Avatar name={displayName} email={avatarEmail} size="md" />
+          <Avatar name={displayName} email={avatarEmail} avatarUrl={user?.avatarUrl} size="md" />
           {!compact && (
             <div className="text-left leading-tight hidden xl:block">
               <div className="text-[12.5px] font-semibold text-ink dark:text-dark-text">
@@ -50,7 +50,7 @@ export function ProfileMenu({ compact = false }: Props): JSX.Element {
       {({ close }) => (
         <>
           <div className="flex items-center gap-3 p-4">
-            <Avatar name={displayName} email={avatarEmail} size="lg" />
+            <Avatar name={displayName} email={avatarEmail} avatarUrl={user?.avatarUrl} size="lg" />
             <div className="min-w-0">
               <p className="text-sm font-semibold text-ink dark:text-dark-text truncate">
                 {displayName}

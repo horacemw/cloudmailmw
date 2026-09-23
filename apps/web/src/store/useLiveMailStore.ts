@@ -111,6 +111,19 @@ const DEFAULT_FALLBACK: Record<'sent' | 'drafts' | 'trash' | 'spam' | 'archive',
   archive: 'Archive',
 };
 
+// Auto-retry cadence when the mail server can't be reached at init time.
+// If we're already in server-unreachable, poll every RETRY_MS until we get
+// a real reply. Prevents a transient outage (or a stale SPA loaded before a
+// backend fix) from leaving the app permanently in demo/mock mode.
+const RETRY_MS = 30_000;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+function clearRetry(): void {
+  if (retryTimer) {
+    clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+}
+
 export const useLiveMailStore = create<State>((set, get) => ({
   mode: 'checking',
   mailbox: null,
@@ -124,6 +137,7 @@ export const useLiveMailStore = create<State>((set, get) => ({
   searchQuery: '',
 
   init: async () => {
+    clearRetry();
     set({ mode: 'checking', error: null });
     try {
       const mbxList = await api<{ mailboxes: Array<{ id: string; address: string; displayName: string | null; status: string }> }>('/v1/mailboxes');
@@ -152,6 +166,11 @@ export const useLiveMailStore = create<State>((set, get) => ({
         return;
       }
       set({ mode: 'server-unreachable', error: err instanceof ApiError ? err.message : 'Mail server unreachable' });
+      // Schedule a quiet retry so the user isn't stuck in demo mode after a
+      // transient outage or a stale-SPA-vs-fresh-backend mismatch.
+      retryTimer = setTimeout(() => {
+        void get().init();
+      }, RETRY_MS);
     }
   },
 

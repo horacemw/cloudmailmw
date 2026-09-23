@@ -43,8 +43,13 @@
     border-radius: 6px;
   }
   button,
-  [role='button'] {
+  [role='button'],
+  a {
     -webkit-tap-highlight-color: transparent;
+    /* Removes iOS Safari's ~300ms tap-delay heuristic (wait-to-see-if-user-
+       is-double-tapping-to-zoom) on all interactive elements. Buttons fire
+       immediately on tap. Safe on desktop — this is a no-op there. */
+    touch-action: manipulation;
   }
 }
 

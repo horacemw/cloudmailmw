@@ -132,6 +132,15 @@ export function ComposeModal(): JSX.Element | null {
             .moveMessage(compose.liveDraftReplaceUid, draftsPath, trashPath)
             .catch(() => { /* best-effort — send already succeeded */ });
         }
+        // Refresh folder counts + (if the user is on Sent) the message list
+        // so the freshly-appended sent message is visible without a manual
+        // navigate-away-and-back. Fire-and-forget — send already succeeded.
+        {
+          const store = useLiveMailStore.getState();
+          void store.refreshFolders();
+          const sentPath = store.folderPathFor('sent');
+          if (store.activeFolder === sentPath) void store.refreshMessages();
+        }
         push({ title: 'Message sent', tone: 'success' });
         closeCompose();
         return;
