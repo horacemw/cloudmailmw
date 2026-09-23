@@ -101,19 +101,20 @@ const routes: FastifyPluginAsync = async (fastify) => {
   });
 
   fastify.get('/users/:userId/avatar', {
-    preHandler: [fastify.requireAuth],
+    // Unauthenticated on purpose: <img src="..."> tags cannot send Authorization
+    // headers, so any endpoint the browser must load as an image needs to be
+    // publicly readable. Avatars carry no confidential content (Gravatar-like)
+    // and the URL includes the user's id — the same id already visible in
+    // any share/mention across the platform. Upload + delete remain auth'd.
     handler: async (req, reply) => {
       const { userId } = z.object({ userId: z.string() }).parse(req.params);
       const found = await findAvatarFile(userId);
       if (!found) throw errors.notFound('avatar_not_found');
-      // Any authenticated caller can fetch — avatars are considered public-ish
-      // within Cloud Mail (like Gravatar). Cross-tenant isolation isn't relevant
-      // because avatars carry no confidential content.
       const stat = await fs.stat(found.abs);
       reply
         .header('content-type', found.mime)
         .header('content-length', String(stat.size))
-        .header('cache-control', 'private, max-age=3600')
+        .header('cache-control', 'public, max-age=3600')
         .header('x-content-type-options', 'nosniff');
       return reply.send(createReadStream(found.abs));
     },

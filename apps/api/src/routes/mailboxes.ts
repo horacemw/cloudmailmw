@@ -83,17 +83,62 @@ const routes: FastifyPluginAsync = async (fastify) => {
       });
       if (existing) throw errors.conflict('mailbox_taken', `Mailbox ${address} already exists`);
 
+      // A mailbox and its owner-User share the SAME argon2id credential.
+      // Rationale: the tenant admin sets one password when creating the
+      // mailbox; the owner must be able to use that one password for both
+      // webmail (User.passwordHash via /v1/auth/login) and IMAP/SMTP
+      // (Mailbox.passwordHash via Dovecot). Storing it once, hashed twice
+      // (via one hash re-used) keeps the two auth surfaces from drifting.
       const passwordHash = await hashPassword(body.password);
-      const mailbox = await prisma.mailbox.create({
-        data: {
-          tenantId,
-          domainId: domain.id,
-          localPart: body.localPart,
-          address,
-          displayName: body.displayName ?? null,
-          passwordHash,
-          ...(body.quotaBytes !== undefined ? { quotaBytes: body.quotaBytes } : {}),
-        },
+
+      // If a User with this email already exists globally, we cannot
+      // silently attach — that would let a tenant admin hijack an unrelated
+      // account by creating a matching-address mailbox. Refuse loudly.
+      const clashingUser = await prisma.user.findUnique({ where: { email: address } });
+      if (clashingUser) {
+        throw errors.conflict(
+          'email_taken_globally',
+          `A MailCloud user with ${address} already exists; ` +
+            `pick a different local part or contact support to reconcile.`,
+        );
+      }
+
+      const { mailbox } = await prisma.$transaction(async (tx) => {
+        const createdMailbox = await tx.mailbox.create({
+          data: {
+            tenantId,
+            domainId: domain.id,
+            localPart: body.localPart,
+            address,
+            displayName: body.displayName ?? null,
+            passwordHash,
+            ...(body.quotaBytes !== undefined ? { quotaBytes: body.quotaBytes } : {}),
+          },
+        });
+
+        // The application-identity User that logs into webmail. Same email
+        // as the mailbox address, same passwordHash. Linked into the tenant
+        // as role=member with mailboxId set so resolveMailboxForRequest()
+        // finds it without needing an X-Cloudmail-Mailbox header.
+        const createdUser = await tx.user.create({
+          data: {
+            email: address,
+            name: body.displayName ?? body.localPart,
+            passwordHash,
+            status: 'active',
+          },
+        });
+
+        await tx.tenantMember.create({
+          data: {
+            tenantId,
+            userId: createdUser.id,
+            role: 'member',
+            mailboxId: createdMailbox.id,
+          },
+        });
+
+        return { mailbox: createdMailbox, user: createdUser };
       });
 
       await prisma.auditEvent.create({
@@ -176,7 +221,18 @@ const routes: FastifyPluginAsync = async (fastify) => {
       const body = z.object({ password: z.string().min(10).max(200) }).parse(req.body);
       const mailbox = await loadTenantMailbox(req.currentTenant!.id, id);
       const passwordHash = await hashPassword(body.password);
-      await prisma.mailbox.update({ where: { id: mailbox.id }, data: { passwordHash } });
+      // Keep the mailbox's owner-User in sync (webmail credential) so a
+      // password reset doesn't leave IMAP working but webmail broken (or
+      // vice versa). The owner-User is found via TenantMember.mailboxId.
+      const ownerMembership = await prisma.tenantMember.findFirst({
+        where: { tenantId: req.currentTenant!.id, mailboxId: mailbox.id, role: 'member' },
+      });
+      await prisma.$transaction([
+        prisma.mailbox.update({ where: { id: mailbox.id }, data: { passwordHash } }),
+        ...(ownerMembership
+          ? [prisma.user.update({ where: { id: ownerMembership.userId }, data: { passwordHash } })]
+          : []),
+      ]);
       await prisma.auditEvent.create({
         data: {
           tenantId: req.currentTenant!.id,

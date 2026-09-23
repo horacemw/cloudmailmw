@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
 import { withImap } from '../mail/imapClient.js';
+import { loopbackTlsOptions } from '../mail/loopbackTls.js';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
 import { syncMailboxUsage } from './quotaSync.js';
@@ -40,6 +41,7 @@ export async function performSend(msg: OutgoingMessage): Promise<SendResult> {
     port: env.SMTP_SUBMISSION_PORT,
     secure: env.SMTP_SUBMISSION_SECURE,
     requireTLS: env.SMTP_SUBMISSION_STARTTLS,
+    tls: loopbackTlsOptions(env.SMTP_SUBMISSION_HOST),
     auth: {
       user: `${msg.from.address}*${env.DOVECOT_MASTER_USER}`,
       pass: env.DOVECOT_MASTER_PASSWORD,

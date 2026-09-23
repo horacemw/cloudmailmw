@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import { env } from '../config/env.js';
 import { logger } from '../lib/logger.js';
+import { loopbackTlsOptions } from './loopbackTls.js';
 
 /**
  * Dovecot supports "master users" — a single credential that can authenticate
@@ -36,6 +37,12 @@ export async function openImapAsMailbox(opts: OpenImapOptions): Promise<ImapFlow
       pass: env.DOVECOT_MASTER_PASSWORD,
     },
     disableAutoIdle: true,
+    // Loopback TLS: when we dial 127.0.0.1 the Dovecot cert (issued for
+    // mail.digiskills.live) will fail Node's default identity check.
+    // Override the identity target with the mail host's public name so
+    // TLS validation succeeds without weakening it (rejectUnauthorized
+    // stays on). Non-loopback deployments use the real host as-is.
+    tls: loopbackTlsOptions(env.IMAP_HOST),
   });
 
   try {

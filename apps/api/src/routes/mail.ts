@@ -5,6 +5,7 @@ import nodemailer from 'nodemailer';
 import path from 'node:path';
 import { createReadStream } from 'node:fs';
 import { withImap } from '../mail/imapClient.js';
+import { loopbackTlsOptions } from '../mail/loopbackTls.js';
 import { resolveMailboxForRequest } from '../mail/resolveMailbox.js';
 import { prisma } from '../lib/prisma.js';
 import { extractCidImages } from '../services/signatureHtml.js';
@@ -365,6 +366,7 @@ const routes: FastifyPluginAsync = async (fastify) => {
         port: env.SMTP_SUBMISSION_PORT,
         secure: env.SMTP_SUBMISSION_SECURE,
         requireTLS: env.SMTP_SUBMISSION_STARTTLS,
+        tls: loopbackTlsOptions(env.SMTP_SUBMISSION_HOST),
         auth: {
           user: `${mb.address}*${env.DOVECOT_MASTER_USER}`,
           pass: env.DOVECOT_MASTER_PASSWORD,
