@@ -187,14 +187,36 @@ const routes: FastifyPluginAsync = async (fastify) => {
         })
         .parse(req.body);
       const mailbox = await loadTenantMailbox(req.currentTenant!.id, id);
-      const updated = await prisma.mailbox.update({
-        where: { id: mailbox.id },
-        data: {
-          ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
-          ...(body.quotaBytes !== undefined ? { quotaBytes: body.quotaBytes } : {}),
-          ...(body.status !== undefined ? { status: body.status } : {}),
-        },
-      });
+
+      // Mirror mailbox status onto the owner-User so a suspended/disabled
+      // mailbox actually blocks webmail login too — /v1/auth/login rejects
+      // any User whose status is not 'active'. Without this, an admin could
+      // suspend a mailbox and the owner would still successfully sign in
+      // to a broken empty inbox (mail routes fail, login succeeds — a
+      // confusing half-locked state).
+      //
+      // Mapping: mailbox 'active' -> user 'active', anything else -> 'suspended'.
+      // We only touch the owner-User when status is actually changing.
+      const ownerMembership = body.status !== undefined
+        ? await prisma.tenantMember.findFirst({
+            where: { tenantId: req.currentTenant!.id, mailboxId: mailbox.id, role: 'member' },
+          })
+        : null;
+      const nextUserStatus = body.status === 'active' ? 'active' : 'suspended';
+
+      const [updated] = await prisma.$transaction([
+        prisma.mailbox.update({
+          where: { id: mailbox.id },
+          data: {
+            ...(body.displayName !== undefined ? { displayName: body.displayName } : {}),
+            ...(body.quotaBytes !== undefined ? { quotaBytes: body.quotaBytes } : {}),
+            ...(body.status !== undefined ? { status: body.status } : {}),
+          },
+        }),
+        ...(ownerMembership && body.status !== undefined
+          ? [prisma.user.update({ where: { id: ownerMembership.userId }, data: { status: nextUserStatus } })]
+          : []),
+      ]);
       await prisma.auditEvent.create({
         data: {
           tenantId: req.currentTenant!.id,
@@ -273,16 +295,53 @@ const routes: FastifyPluginAsync = async (fastify) => {
   });
 
   /* ─── DELETE /v1/mailboxes/:id ─────────────────────────────────── */
+  //
+  // Soft-delete only. The mailbox row is marked pending_deletion; a future
+  // purge worker (not yet implemented) will remove the Maildir on disk and
+  // hard-delete the DB rows once retention policy allows. This preserves
+  // the option to restore accidentally-deleted mailboxes.
+  //
+  // What this handler DOES on the same request:
+  //   1. mailbox.status = 'pending_deletion' — hides mail routes.
+  //   2. owner-User.status = 'suspended' — immediately blocks webmail login
+  //      (Task 13 sync rule). The owner cannot log in and then find their
+  //      mail gone with no explanation.
+  //   3. Revoke all of the owner-User's active refresh tokens — any active
+  //      web session ends on the next refresh attempt.
+  //   4. Audit under 'mailbox.deleted'.
+  //
+  // What this handler does NOT do (deferred to a future purge worker):
+  //   - Delete the User row.  Preserves it in case restore is requested,
+  //     and avoids orphaning any tenantMember in a DIFFERENT tenant that
+  //     happens to reference the same User.
+  //   - Delete the mailbox row.
+  //   - rm -rf /var/vmail/<domain>/<localpart>.
   fastify.delete('/:id', {
     preHandler: [fastify.requireAuth, (req) => fastify.requireTenant(req, 'owner')],
     handler: async (req, reply) => {
       const { id } = z.object({ id: z.string() }).parse(req.params);
       const mailbox = await loadTenantMailbox(req.currentTenant!.id, id);
-      // Soft delete: mark pending, background job will clean up Dovecot storage.
-      await prisma.mailbox.update({
-        where: { id: mailbox.id },
-        data: { status: 'pending_deletion' },
+      const ownerMembership = await prisma.tenantMember.findFirst({
+        where: { tenantId: req.currentTenant!.id, mailboxId: mailbox.id, role: 'member' },
       });
+      await prisma.$transaction([
+        prisma.mailbox.update({
+          where: { id: mailbox.id },
+          data: { status: 'pending_deletion' },
+        }),
+        ...(ownerMembership
+          ? [
+              prisma.user.update({
+                where: { id: ownerMembership.userId },
+                data: { status: 'suspended' },
+              }),
+              prisma.refreshToken.updateMany({
+                where: { userId: ownerMembership.userId, revokedAt: null },
+                data: { revokedAt: new Date() },
+              }),
+            ]
+          : []),
+      ]);
       await prisma.auditEvent.create({
         data: {
           tenantId: req.currentTenant!.id,
@@ -290,12 +349,15 @@ const routes: FastifyPluginAsync = async (fastify) => {
           action: 'mailbox.deleted',
           targetType: 'mailbox',
           targetId: mailbox.id,
-          metadata: { address: mailbox.address },
+          metadata: {
+            address: mailbox.address,
+            ownerUserSuspended: Boolean(ownerMembership),
+          },
           ipAddress: req.ip,
         },
       });
       reply.code(202);
-      return { status: 'pending_deletion' };
+      return { status: 'pending_deletion', ownerUserSuspended: Boolean(ownerMembership) };
     },
   });
 };
