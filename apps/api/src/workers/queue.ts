@@ -19,6 +19,7 @@ export const QUEUE_NAMES = {
   reminders: 'cloudmail-reminders',
   quota: 'cloudmail-quota',
   schedule: 'cloudmail-schedule',
+  mailboxPurge: 'cloudmail-mailbox-purge',
 } as const;
 
 export const migrationQueue = new Queue(QUEUE_NAMES.migration, { connection: bullConnection });

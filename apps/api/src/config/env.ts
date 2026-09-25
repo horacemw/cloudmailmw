@@ -60,6 +60,12 @@ const schema = z.object({
 
   UPLOAD_TMP_DIR: z.string().default('./.uploads'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+
+  // Mailbox soft-delete retention: how long a mailbox stays in
+  // status=pending_deletion before the purge worker hard-deletes the DB
+  // rows and rm -rf's the Maildir on disk. 7 days matches common ISP
+  // trash-retention and gives an accidental delete a real recovery window.
+  MAILBOX_PURGE_RETENTION_DAYS: z.coerce.number().int().min(0).max(365).default(7),
 });
 
 const parsed = schema.safeParse(process.env);

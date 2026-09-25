@@ -1,0 +1,7 @@
+# Allow the cloudmail unix user (running the API + worker processes) to
+# invoke the Maildir purge helper without a password. The helper does its
+# own strict input validation and refuses paths outside /var/vmail.
+#
+# Deploy: install -m 0440 -o root -g root this file to /etc/sudoers.d/cloudmail-purge
+# then run `visudo -c -q -f /etc/sudoers.d/cloudmail-purge` to validate.
+cloudmail ALL=(root) NOPASSWD: /usr/local/bin/cloudmail-purge-maildir

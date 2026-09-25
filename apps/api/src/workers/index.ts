@@ -10,14 +10,20 @@ import { webhookWorker } from './webhookWorker.js';
 import { reminderWorker, ensureReminderTickSeeded } from './reminderWorker.js';
 import { quotaWorker, ensureQuotaTickSeeded } from './quotaWorker.js';
 import { scheduleWorker } from './scheduleWorker.js';
+import { mailboxPurgeWorker, ensureMailboxPurgeTickSeeded } from './mailboxPurgeWorker.js';
 
 logger.info('cloudmail worker starting');
-const workers = [migrationWorker, exportWorker, webhookWorker, reminderWorker, quotaWorker, scheduleWorker];
+const workers = [
+  migrationWorker, exportWorker, webhookWorker,
+  reminderWorker, quotaWorker, scheduleWorker,
+  mailboxPurgeWorker,
+];
 
 // Seed recurring tick jobs so a single boot brings the loops back even if
-// Redis was flushed. Both are jobId-idempotent so re-seeding is safe.
+// Redis was flushed. All three are jobId-idempotent so re-seeding is safe.
 ensureReminderTickSeeded().catch((err) => logger.warn({ err }, 'reminder_seed_failed'));
 ensureQuotaTickSeeded().catch((err) => logger.warn({ err }, 'quota_seed_failed'));
+ensureMailboxPurgeTickSeeded().catch((err) => logger.warn({ err }, 'mailbox_purge_seed_failed'));
 
 async function shutdown(signal: string): Promise<void> {
   logger.info({ signal }, 'shutting down workers');
