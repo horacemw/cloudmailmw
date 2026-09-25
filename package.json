@@ -14,6 +14,7 @@
     "build:api": "npm --workspace @cloudmail/api run build",
     "build": "npm run build:web && npm run build:api",
     "typecheck": "npm --workspaces --if-present run typecheck",
+    "test": "npm --workspaces --if-present run test",
     "prisma:generate": "npm --workspace @cloudmail/api run prisma:generate",
     "prisma:migrate": "npm --workspace @cloudmail/api run prisma:migrate",
     "docker:up": "docker compose -f infra/docker-compose.dev.yml up -d",

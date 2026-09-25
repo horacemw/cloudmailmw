@@ -9,6 +9,8 @@
     "build": "tsc -b --pretty && node -e \"require('fs').cpSync('prisma','dist/prisma',{recursive:true})\"",
     "start": "node dist/server.js",
     "typecheck": "tsc -b --pretty",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
@@ -57,6 +59,7 @@
     "@types/qrcode": "^1.5.5",
     "prisma": "^6.1.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.9"
   }
 }
